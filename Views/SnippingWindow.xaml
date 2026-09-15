@@ -1,0 +1,92 @@
+<Window
+    x:Class="SmartScreenshotManager.Views.SnippingWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Snipping">
+
+    <Grid
+        x:Name="RootGrid"
+        Background="Black"
+        PointerPressed="RootGrid_PointerPressed"
+        PointerMoved="RootGrid_PointerMoved"
+        PointerReleased="RootGrid_PointerReleased">
+
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator
+                Key="Escape"
+                Invoked="EscapeAccelerator_Invoked" />
+        </Grid.KeyboardAccelerators>
+
+        <!-- Frozen desktop screenshot -->
+        <Image
+            x:Name="ScreenImage"
+            Stretch="Fill"
+            IsHitTestVisible="False" />
+
+        <!-- Initial dark overlay -->
+        <Rectangle
+            x:Name="FullDim"
+            Fill="#88000000"
+            IsHitTestVisible="False" />
+
+        <!-- Selection overlay -->
+        <Canvas
+            x:Name="OverlayCanvas"
+            Background="Transparent"
+            IsHitTestVisible="False">
+
+            <Rectangle
+                x:Name="TopDim"
+                Fill="#88000000" />
+
+            <Rectangle
+                x:Name="BottomDim"
+                Fill="#88000000" />
+
+            <Rectangle
+                x:Name="LeftDim"
+                Fill="#88000000" />
+
+            <Rectangle
+                x:Name="RightDim"
+                Fill="#88000000" />
+
+            <Rectangle
+                x:Name="SelectionRectangle"
+                Stroke="White"
+                StrokeThickness="2"
+                Fill="#10FFFFFF"
+                Visibility="Collapsed" />
+
+        </Canvas>
+
+        <!-- Hint -->
+        <Border
+            HorizontalAlignment="Center"
+            VerticalAlignment="Top"
+            Margin="0,24,0,0"
+            Padding="18,10"
+            CornerRadius="8"
+            Background="#DD202020"
+            IsHitTestVisible="False">
+
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="12">
+
+                <TextBlock
+                    Text="Select an area to capture"
+                    Foreground="White"
+                    FontWeight="SemiBold" />
+
+                <TextBlock
+                    Text="Esc to cancel"
+                    Foreground="#BFFFFFFF" />
+
+            </StackPanel>
+
+        </Border>
+
+    </Grid>
+
+</Window>
