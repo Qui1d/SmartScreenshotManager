@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SmartScreenshotManager (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SmartScreenshotManager (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
