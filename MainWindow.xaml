@@ -160,14 +160,20 @@
                 Height="42"
                 Margin="0,20,0,14" />
 
-            <!-- Current screenshot folder -->
-            <TextBlock
-                x:Name="SelectedFolderText"
-                Grid.Row="2"
-                Text="No screenshot folder selected"
-                Opacity="0.55"
-                Margin="0,0,0,18"
-                TextTrimming="CharacterEllipsis" />
+            <!-- Current screenshot folder and persistent storage errors -->
+            <StackPanel Grid.Row="2" Margin="0,0,0,18" Spacing="8">
+                <TextBlock
+                    x:Name="SelectedFolderText"
+                    Text="No screenshot folder selected"
+                    Opacity="0.55"
+                    TextTrimming="CharacterEllipsis" />
+                <InfoBar
+                    x:Name="StorageInfoBar"
+                    IsOpen="False"
+                    Severity="Error"
+                    Title="Screenshot library"
+                    IsClosable="True" />
+            </StackPanel>
 
             <!-- Gallery + Details -->
             <Grid Grid.Row="3">

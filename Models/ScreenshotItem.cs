@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace SmartScreenshotManager.Models
 {
@@ -10,6 +10,7 @@ namespace SmartScreenshotManager.Models
         public string FileName { get; set; } = string.Empty;
 
         public DateTime CreatedAt { get; set; }
+        public DateTime AddedAt { get; set; }
 
         public string? OcrText { get; set; }
         public string? Description { get; set; }

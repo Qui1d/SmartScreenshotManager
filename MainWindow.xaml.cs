@@ -2,6 +2,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using SmartScreenshotManager.Data;
 using SmartScreenshotManager.Models;
 using SmartScreenshotManager.Services;
 using SmartScreenshotManager.Views;
@@ -10,6 +11,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -28,6 +30,10 @@ namespace SmartScreenshotManager
 
         private readonly DispatcherQueue _dispatcherQueue;
         private readonly SettingsService _settingsService;
+        private readonly ScreenshotRepository _repository;
+        private readonly SemaphoreSlim _storageGate = new(1, 1);
+        private int _folderVersion;
+        private bool _isClosed;
 
         private HotkeyService? _hotkeyService;
         private SnippingWindow? _snippingWindow;
@@ -52,6 +58,9 @@ namespace SmartScreenshotManager
 
             _settingsService =
                 new SettingsService();
+
+            _repository = new ScreenshotRepository(Path.Combine(
+                ApplicationData.Current.LocalFolder.Path, "screenshots.db"));
 
             SettingsView.ParentWindow =
                 this;
@@ -413,11 +422,13 @@ namespace SmartScreenshotManager
                 _sortNewestFirst
                     ? Screenshots
                         .OrderByDescending(
-                            x => x.CreatedAt)
+                            x => x.AddedAt)
+                        .ThenBy(x => x.Id)
                         .ToList()
                     : Screenshots
                         .OrderBy(
-                            x => x.CreatedAt)
+                            x => x.AddedAt)
+                        .ThenBy(x => x.Id)
                         .ToList();
 
             Screenshots.Clear();
@@ -763,26 +774,11 @@ namespace SmartScreenshotManager
                 File.Delete(
                     filePath);
 
-                _dispatcherQueue.TryEnqueue(() =>
-                {
-                    var screenshot =
-                        Screenshots.FirstOrDefault(x =>
-                            string.Equals(
-                                x.FilePath,
-                                filePath,
-                                StringComparison.OrdinalIgnoreCase));
-
-                    if (screenshot != null)
-                    {
-                        Screenshots.Remove(
-                            screenshot);
-                    }
-                });
+                await RemoveScreenshotAsync(filePath);
             }
             catch (Exception exception)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    exception);
+                ShowStorageError(exception);
             }
         }
 
@@ -826,122 +822,131 @@ namespace SmartScreenshotManager
             ShowGalleryPage();
         }
 
-        private void SetScreenshotFolder(
-            string folderPath)
+        private async void SetScreenshotFolder(string folderPath)
         {
-            if (!Directory.Exists(
-                    folderPath))
-            {
-                return;
-            }
-
-            _currentFolderPath =
-                folderPath;
-
-            SelectedFolderText.Text =
-                folderPath;
-
+            if (!Directory.Exists(folderPath)) return;
+            StopWatchingFolder();
+            int version = ++_folderVersion;
+            _currentFolderPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
+            SelectedFolderText.Text = _currentFolderPath;
             Screenshots.Clear();
-
-            LoadScreenshotsFromFolder(
-                folderPath);
-
-            StartWatchingFolder(
-                folderPath);
-
             CloseDetailsPanel();
+
+            await _storageGate.WaitAsync();
+            try
+            {
+                if (_isClosed || version != _folderVersion) return;
+                // Subscribe before scanning so new files cannot fall into a gap.
+                StartWatchingFolder(_currentFolderPath);
+                string folder = _currentFolderPath;
+                var items = await Task.Run(() => _repository.SynchronizeFolder(folder));
+                if (_isClosed || version != _folderVersion) return;
+                foreach (var item in items) Screenshots.Add(item);
+                ApplyCurrentSort();
+            }
+            catch (Exception exception)
+            {
+                ShowStorageError(exception);
+            }
+            finally
+            {
+                _storageGate.Release();
+            }
         }
 
-        private void LoadScreenshotsFromFolder(
-            string folderPath)
+        private bool IsCurrentFolder(string filePath) =>
+            !_isClosed && string.Equals(Path.GetDirectoryName(Path.GetFullPath(filePath)),
+                _currentFolderPath, StringComparison.OrdinalIgnoreCase);
+
+        private async void AddScreenshot(string filePath)
         {
-            if (!Directory.Exists(
-                    folderPath))
+            await _storageGate.WaitAsync();
+            try
             {
-                return;
+                if (!IsCurrentFolder(filePath) || !File.Exists(filePath)
+                    || !IsSupportedImage(filePath)) return;
+                int version = _folderVersion;
+                if (Screenshots.Any(x => string.Equals(x.FilePath, filePath,
+                    StringComparison.OrdinalIgnoreCase))) return;
+                var screenshot = await Task.Run(() => _repository.GetOrAdd(filePath));
+                if (version != _folderVersion || !IsCurrentFolder(filePath)
+                    || !File.Exists(filePath)) return;
+                Screenshots.Add(screenshot);
+                ApplyCurrentSort();
             }
-
-            var files =
-                Directory
-                    .EnumerateFiles(
-                        folderPath)
-                    .Where(
-                        IsSupportedImage);
-
-            foreach (var file in files)
+            catch (Exception exception)
             {
-                AddScreenshot(
-                    file);
+                ShowStorageError(exception);
             }
-
-            ApplyCurrentSort();
+            finally
+            {
+                _storageGate.Release();
+            }
         }
 
-        private void AddScreenshot(
-            string filePath)
+        private static bool IsSupportedImage(string filePath) =>
+            ScreenshotRepository.IsSupportedImage(filePath);
+
+        private async Task RemoveScreenshotAsync(string filePath)
         {
-            if (!File.Exists(
-                    filePath))
+            await _storageGate.WaitAsync();
+            try
             {
-                return;
+                // A delete followed by recreation at the same path must not remove the new file.
+                if (File.Exists(filePath)) return;
+                await Task.Run(() => _repository.Delete(filePath));
+                if (!IsCurrentFolder(filePath)) return;
+                RemoveScreenshotCard(filePath);
             }
-
-            if (!IsSupportedImage(
-                    filePath))
+            catch (Exception exception)
             {
-                return;
+                ShowStorageError(exception);
             }
-
-            bool alreadyExists =
-                Screenshots.Any(x =>
-                    string.Equals(
-                        x.FilePath,
-                        filePath,
-                        StringComparison.OrdinalIgnoreCase));
-
-            if (alreadyExists)
-                return;
-
-            var screenshot =
-                new ScreenshotItem
-                {
-                    FilePath =
-                        filePath,
-
-                    FileName =
-                        Path.GetFileName(
-                            filePath),
-
-                    CreatedAt =
-                        File.GetCreationTime(
-                            filePath)
-                };
-
-            Screenshots.Add(
-                screenshot);
-
-            ApplyCurrentSort();
+            finally
+            {
+                _storageGate.Release();
+            }
         }
 
-        private static bool IsSupportedImage(
-            string filePath)
+        private void RemoveScreenshotCard(string filePath)
         {
-            string extension =
-                Path.GetExtension(
-                    filePath);
+            if (string.Equals(_detailsFilePath, filePath, StringComparison.OrdinalIgnoreCase))
+                CloseDetailsPanel();
+            var item = Screenshots.FirstOrDefault(x => string.Equals(x.FilePath,
+                filePath, StringComparison.OrdinalIgnoreCase));
+            if (item != null) Screenshots.Remove(item);
+        }
 
-            return
-                extension.Equals(
-                    ".png",
-                    StringComparison.OrdinalIgnoreCase)
-                ||
-                extension.Equals(
-                    ".jpg",
-                    StringComparison.OrdinalIgnoreCase)
-                ||
-                extension.Equals(
-                    ".jpeg",
-                    StringComparison.OrdinalIgnoreCase);
+        private async Task RenameScreenshotAsync(string oldPath, string newPath)
+        {
+            await _storageGate.WaitAsync();
+            try
+            {
+                if (_isClosed) return;
+                if (IsSupportedImage(newPath))
+                    await Task.Run(() => _repository.Rename(oldPath, newPath));
+                else
+                    await Task.Run(() => _repository.Delete(oldPath));
+                if (IsCurrentFolder(oldPath)) RemoveScreenshotCard(oldPath);
+                if (IsCurrentFolder(newPath)) RemoveScreenshotCard(newPath);
+            }
+            catch (Exception exception)
+            {
+                ShowStorageError(exception);
+            }
+            finally
+            {
+                _storageGate.Release();
+            }
+            if (IsSupportedImage(newPath)) await WaitAndAddScreenshotAsync(newPath);
+        }
+
+        private void ShowStorageError(Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(exception);
+            if (_isClosed) return;
+            StorageInfoBar.Message = "Could not update the screenshot library. " + exception.Message;
+            StorageInfoBar.IsOpen = true;
         }
 
         // =========================
@@ -1017,48 +1022,16 @@ namespace SmartScreenshotManager
                     e.FullPath);
         }
 
-        private void Watcher_Renamed(
-            object sender,
-            RenamedEventArgs e)
+        private void Watcher_Renamed(object sender, RenamedEventArgs e)
         {
-            if (!IsSupportedImage(
-                    e.FullPath))
-            {
-                return;
-            }
-
-            _ =
-                WaitAndAddScreenshotAsync(
-                    e.FullPath);
+            _dispatcherQueue.TryEnqueue(async () =>
+                await RenameScreenshotAsync(e.OldFullPath, e.FullPath));
         }
 
-        private void Watcher_Deleted(
-            object sender,
-            FileSystemEventArgs e)
+        private void Watcher_Deleted(object sender, FileSystemEventArgs e)
         {
-            _dispatcherQueue.TryEnqueue(() =>
-            {
-                var screenshot =
-                    Screenshots.FirstOrDefault(x =>
-                        string.Equals(
-                            x.FilePath,
-                            e.FullPath,
-                            StringComparison.OrdinalIgnoreCase));
-
-                if (screenshot == null)
-                    return;
-
-                if (string.Equals(
-                        _detailsFilePath,
-                        e.FullPath,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    CloseDetailsPanel();
-                }
-
-                Screenshots.Remove(
-                    screenshot);
-            });
+            _dispatcherQueue.TryEnqueue(async () =>
+                await RemoveScreenshotAsync(e.FullPath));
         }
 
         private async Task WaitAndAddScreenshotAsync(
@@ -1352,6 +1325,8 @@ namespace SmartScreenshotManager
             object sender,
             WindowEventArgs args)
         {
+            _isClosed = true;
+            ++_folderVersion;
             StopWatchingFolder();
 
             if (_imageViewerWindow != null)
