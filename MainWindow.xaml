@@ -59,24 +59,36 @@
                         Click="FavoritesButton_Click" />
 
                     <Button
+                        x:Name="GamingButton"
                         Content="Gaming"
+                        Tag="Gaming"
                         HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8" />
+                        Margin="0,0,0,8"
+                        Click="CategoryButton_Click" />
 
                     <Button
+                        x:Name="ProgrammingButton"
                         Content="Programming"
+                        Tag="Programming"
                         HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8" />
+                        Margin="0,0,0,8"
+                        Click="CategoryButton_Click" />
 
                     <Button
+                        x:Name="DocumentsButton"
                         Content="Documents"
+                        Tag="Documents"
                         HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8" />
+                        Margin="0,0,0,8"
+                        Click="CategoryButton_Click" />
 
                     <Button
+                        x:Name="OtherButton"
                         Content="Other"
+                        Tag="Other"
                         HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8" />
+                        Margin="0,0,0,8"
+                        Click="CategoryButton_Click" />
 
                 </StackPanel>
 
@@ -298,6 +310,32 @@
                                                 <FontIcon Glyph="{x:Bind FavoriteGlyph, Mode=OneWay}" />
                                             </MenuFlyoutItem.Icon>
                                         </MenuFlyoutItem>
+
+                                        <MenuFlyoutSubItem
+                                            Text="Set category"
+                                            IsEnabled="{x:Bind CanChangeCategory, Mode=OneWay}">
+                                            <MenuFlyoutItem
+                                                Text="Gaming"
+                                                Tag="{x:Bind Id}"
+                                                Click="CategoryMenuItem_Click" />
+                                            <MenuFlyoutItem
+                                                Text="Programming"
+                                                Tag="{x:Bind Id}"
+                                                Click="CategoryMenuItem_Click" />
+                                            <MenuFlyoutItem
+                                                Text="Documents"
+                                                Tag="{x:Bind Id}"
+                                                Click="CategoryMenuItem_Click" />
+                                            <MenuFlyoutItem
+                                                Text="Other"
+                                                Tag="{x:Bind Id}"
+                                                Click="CategoryMenuItem_Click" />
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem
+                                                Text="Clear category"
+                                                Tag="{x:Bind Id}"
+                                                Click="ClearCategoryMenuItem_Click" />
+                                        </MenuFlyoutSubItem>
 
                                         <MenuFlyoutSeparator />
 

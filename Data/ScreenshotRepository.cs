@@ -166,6 +166,23 @@ namespace SmartScreenshotManager.Data
             DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToLocalTime();
 
         // Explicit metadata updates keep folder scans from overwriting user/AI data.
+        public void SetCategory(int id, string? category)
+        {
+            if (category != null && category != "Gaming" && category != "Programming"
+                && category != "Documents" && category != "Other")
+                throw new ArgumentException("Unknown screenshot category.", nameof(category));
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE Screenshots SET Category = $category WHERE Id = $id";
+                command.Parameters.AddWithValue("$category", (object?)category ?? DBNull.Value);
+                command.Parameters.AddWithValue("$id", id);
+                if (command.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("Screenshot no longer exists in the library.");
+            }
+        }
+
         public void SetFavorite(int id, bool isFavorite)
         {
             lock (_gate)

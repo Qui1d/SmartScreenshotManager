@@ -31,6 +31,7 @@ namespace SmartScreenshotManager
 
         public ObservableCollection<ScreenshotItem> VisibleScreenshots { get; } = new();
         private bool _showFavoritesOnly;
+        private string? _selectedCategory;
 
         private readonly DispatcherQueue _dispatcherQueue;
         private readonly SettingsService _settingsService;
@@ -420,7 +421,8 @@ namespace SmartScreenshotManager
 
         private void ApplyCurrentSort()
         {
-            var filtered = Screenshots.Where(x => !_showFavoritesOnly || x.IsFavorite);
+            var filtered = Screenshots.Where(x => (!_showFavoritesOnly || x.IsFavorite)
+                && (_selectedCategory == null || x.Category == _selectedCategory));
             var desired = (_sortNewestFirst
                 ? filtered.OrderByDescending(x => x.AddedAt).ThenBy(x => x.Id)
                 : filtered.OrderBy(x => x.AddedAt).ThenBy(x => x.Id)).ToList();
@@ -441,17 +443,66 @@ namespace SmartScreenshotManager
             if (_detailsFilePath != null && !desired.Any(x => string.Equals(
                 x.FilePath, _detailsFilePath, StringComparison.OrdinalIgnoreCase)))
                 CloseDetailsPanel();
-            EmptyGalleryText.Visibility = _showFavoritesOnly && VisibleScreenshots.Count == 0
-                ? Visibility.Visible : Visibility.Collapsed;
+            EmptyGalleryText.Text = _showFavoritesOnly
+                ? "No favorite screenshots yet."
+                : $"No screenshots in {_selectedCategory} yet.";
+            EmptyGalleryText.Visibility = (_showFavoritesOnly || _selectedCategory != null)
+                && VisibleScreenshots.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void UpdateGallerySection()
         {
-            GalleryTitle.Text = _showFavoritesOnly ? "Favorites" : "All Screenshots";
+            GalleryTitle.Text = _showFavoritesOnly ? "Favorites" : _selectedCategory ?? "All Screenshots";
             var accentStyle = (Style)Application.Current.Resources["AccentButtonStyle"];
-            AllScreenshotsButton.Style = _showFavoritesOnly ? null : accentStyle;
+            AllScreenshotsButton.Style = !_showFavoritesOnly && _selectedCategory == null ? accentStyle : null;
             FavoritesButton.Style = _showFavoritesOnly ? accentStyle : null;
+            GamingButton.Style = _selectedCategory == "Gaming" ? accentStyle : null;
+            ProgrammingButton.Style = _selectedCategory == "Programming" ? accentStyle : null;
+            DocumentsButton.Style = _selectedCategory == "Documents" ? accentStyle : null;
+            OtherButton.Style = _selectedCategory == "Other" ? accentStyle : null;
             ApplyCurrentSort();
+        }
+
+        private async void CategoryMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem { Tag: int id } menuItem)
+                await ChangeCategoryAsync(id, menuItem.Text);
+        }
+
+        private async void ClearCategoryMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem { Tag: int id })
+                await ChangeCategoryAsync(id, null);
+        }
+
+        private async Task ChangeCategoryAsync(int id, string? category)
+        {
+            var item = Screenshots.FirstOrDefault(x => x.Id == id);
+            if (item == null || item.IsCategoryUpdating || item.Category == category) return;
+            int version = _folderVersion;
+            item.IsCategoryUpdating = true;
+            await _storageGate.WaitAsync();
+            try
+            {
+                if (_isClosed || version != _folderVersion || !Screenshots.Contains(item)) return;
+                await Task.Run(() => _repository.SetCategory(id, category));
+                item.Category = category;
+                if (!_isClosed && version == _folderVersion)
+                {
+                    if (string.Equals(_detailsFilePath, item.FilePath, StringComparison.OrdinalIgnoreCase))
+                        DetailsCategory.Text = category ?? "Not assigned";
+                    ApplyCurrentSort();
+                }
+            }
+            catch (Exception exception)
+            {
+                ShowStorageError(exception);
+            }
+            finally
+            {
+                item.IsCategoryUpdating = false;
+                _storageGate.Release();
+            }
         }
 
         private void ScreenshotCard_PointerEntered(object sender, PointerRoutedEventArgs e)
@@ -1196,6 +1247,7 @@ namespace SmartScreenshotManager
         private void AllScreenshotsButton_Click(object sender, RoutedEventArgs e)
         {
             _showFavoritesOnly = false;
+            _selectedCategory = null;
             UpdateGallerySection();
             ShowGalleryPage();
         }
@@ -1203,6 +1255,16 @@ namespace SmartScreenshotManager
         private void FavoritesButton_Click(object sender, RoutedEventArgs e)
         {
             _showFavoritesOnly = true;
+            _selectedCategory = null;
+            UpdateGallerySection();
+            ShowGalleryPage();
+        }
+
+        private void CategoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string category }) return;
+            _showFavoritesOnly = false;
+            _selectedCategory = category;
             UpdateGallerySection();
             ShowGalleryPage();
         }

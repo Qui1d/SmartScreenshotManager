@@ -15,7 +15,32 @@ namespace SmartScreenshotManager.Models
 
         public string? OcrText { get; set; }
         public string? Description { get; set; }
-        public string? Category { get; set; }
+        private string? _category;
+        private bool _isCategoryUpdating;
+
+        public string? Category
+        {
+            get => _category;
+            set
+            {
+                if (_category == value) return;
+                _category = value;
+                Notify(nameof(Category));
+            }
+        }
+
+        public bool IsCategoryUpdating
+        {
+            get => _isCategoryUpdating;
+            set
+            {
+                if (_isCategoryUpdating == value) return;
+                _isCategoryUpdating = value;
+                Notify(nameof(CanChangeCategory));
+            }
+        }
+
+        public bool CanChangeCategory => !IsCategoryUpdating;
         public string? Tags { get; set; }
 
         private bool _isFavorite;
