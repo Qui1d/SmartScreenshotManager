@@ -2,6 +2,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SmartScreenshotManager.Data;
 using SmartScreenshotManager.Models;
 using SmartScreenshotManager.Services;
@@ -27,6 +28,9 @@ namespace SmartScreenshotManager
 
         public ObservableCollection<ScreenshotItem> Screenshots { get; set; } =
             new();
+
+        public ObservableCollection<ScreenshotItem> VisibleScreenshots { get; } = new();
+        private bool _showFavoritesOnly;
 
         private readonly DispatcherQueue _dispatcherQueue;
         private readonly SettingsService _settingsService;
@@ -73,6 +77,7 @@ namespace SmartScreenshotManager
 
             InitializeGlobalHotkey();
 
+            UpdateGallerySection();
             LoadSavedFolder();
 
             Closed +=
@@ -415,29 +420,112 @@ namespace SmartScreenshotManager
 
         private void ApplyCurrentSort()
         {
-            if (Screenshots.Count <= 1)
-                return;
+            var filtered = Screenshots.Where(x => !_showFavoritesOnly || x.IsFavorite);
+            var desired = (_sortNewestFirst
+                ? filtered.OrderByDescending(x => x.AddedAt).ThenBy(x => x.Id)
+                : filtered.OrderBy(x => x.AddedAt).ThenBy(x => x.Id)).ToList();
 
-            var sortedScreenshots =
-                _sortNewestFirst
-                    ? Screenshots
-                        .OrderByDescending(
-                            x => x.AddedAt)
-                        .ThenBy(x => x.Id)
-                        .ToList()
-                    : Screenshots
-                        .OrderBy(
-                            x => x.AddedAt)
-                        .ThenBy(x => x.Id)
-                        .ToList();
-
-            Screenshots.Clear();
-
-            foreach (var screenshot
-                     in sortedScreenshots)
+            // Keep existing card instances and hover/focus when only one item changes.
+            var desiredItems = desired.ToHashSet();
+            for (int i = VisibleScreenshots.Count - 1; i >= 0; i--)
+                if (!desiredItems.Contains(VisibleScreenshots[i])) VisibleScreenshots.RemoveAt(i);
+            for (int i = 0; i < desired.Count; i++)
             {
-                Screenshots.Add(
-                    screenshot);
+                if (i < VisibleScreenshots.Count && ReferenceEquals(VisibleScreenshots[i], desired[i]))
+                    continue;
+                int existingIndex = VisibleScreenshots.IndexOf(desired[i]);
+                if (existingIndex >= 0) VisibleScreenshots.Move(existingIndex, i);
+                else VisibleScreenshots.Insert(i, desired[i]);
+            }
+
+            if (_detailsFilePath != null && !desired.Any(x => string.Equals(
+                x.FilePath, _detailsFilePath, StringComparison.OrdinalIgnoreCase)))
+                CloseDetailsPanel();
+            EmptyGalleryText.Visibility = _showFavoritesOnly && VisibleScreenshots.Count == 0
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void UpdateGallerySection()
+        {
+            GalleryTitle.Text = _showFavoritesOnly ? "Favorites" : "All Screenshots";
+            var accentStyle = (Style)Application.Current.Resources["AccentButtonStyle"];
+            AllScreenshotsButton.Style = _showFavoritesOnly ? null : accentStyle;
+            FavoritesButton.Style = _showFavoritesOnly ? accentStyle : null;
+            ApplyCurrentSort();
+        }
+
+        private void ScreenshotCard_PointerEntered(object sender, PointerRoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { DataContext: ScreenshotItem item })
+                item.IsCardHovered = true;
+        }
+
+        private void ScreenshotCard_PointerExited(object sender, PointerRoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { DataContext: ScreenshotItem item })
+                item.IsCardHovered = false;
+        }
+
+        private void ScreenshotCard_Unloaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { DataContext: ScreenshotItem item })
+            {
+                item.IsCardHovered = false;
+                item.IsFavoriteFocused = false;
+            }
+        }
+
+        private void FavoriteButton_GotFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button { DataContext: ScreenshotItem item } button)
+                item.IsFavoriteFocused = button.FocusState == FocusState.Keyboard;
+        }
+
+        private void FavoriteButton_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { DataContext: ScreenshotItem item })
+                item.IsFavoriteFocused = false;
+        }
+
+        private void FavoriteButton_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+        {
+            e.Handled = true;
+        }
+
+        private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: int id }) await ToggleFavoriteAsync(id);
+        }
+
+        private async void FavoriteMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem { Tag: int id }) await ToggleFavoriteAsync(id);
+        }
+
+        private async Task ToggleFavoriteAsync(int id)
+        {
+            var item = Screenshots.FirstOrDefault(x => x.Id == id);
+            if (item == null || item.IsFavoriteUpdating) return;
+            int version = _folderVersion;
+            item.IsFavoriteUpdating = true;
+            await _storageGate.WaitAsync();
+            try
+            {
+                if (_isClosed || version != _folderVersion || !Screenshots.Contains(item)) return;
+                bool nextValue = !item.IsFavorite;
+                await Task.Run(() => _repository.SetFavorite(id, nextValue));
+                // Change the star only after a successful write; errors leave it unchanged.
+                item.IsFavorite = nextValue;
+                if (!_isClosed && version == _folderVersion) ApplyCurrentSort();
+            }
+            catch (Exception exception)
+            {
+                ShowStorageError(exception);
+            }
+            finally
+            {
+                item.IsFavoriteUpdating = false;
+                _storageGate.Release();
             }
         }
 
@@ -459,6 +547,13 @@ namespace SmartScreenshotManager
                 is not ScreenshotItem screenshot)
             {
                 return;
+            }
+
+            for (DependencyObject? source = e.OriginalSource as DependencyObject;
+                 source != null && !ReferenceEquals(source, sender);
+                 source = VisualTreeHelper.GetParent(source))
+            {
+                if (source is Button) return;
             }
 
             string filePath =
@@ -830,6 +925,7 @@ namespace SmartScreenshotManager
             _currentFolderPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
             SelectedFolderText.Text = _currentFolderPath;
             Screenshots.Clear();
+            ApplyCurrentSort();
             CloseDetailsPanel();
 
             await _storageGate.WaitAsync();
@@ -914,7 +1010,11 @@ namespace SmartScreenshotManager
                 CloseDetailsPanel();
             var item = Screenshots.FirstOrDefault(x => string.Equals(x.FilePath,
                 filePath, StringComparison.OrdinalIgnoreCase));
-            if (item != null) Screenshots.Remove(item);
+            if (item != null)
+            {
+                Screenshots.Remove(item);
+                ApplyCurrentSort();
+            }
         }
 
         private async Task RenameScreenshotAsync(string oldPath, string newPath)
@@ -1093,10 +1193,17 @@ namespace SmartScreenshotManager
         // Navigation
         // =========================
 
-        private void AllScreenshotsButton_Click(
-            object sender,
-            RoutedEventArgs e)
+        private void AllScreenshotsButton_Click(object sender, RoutedEventArgs e)
         {
+            _showFavoritesOnly = false;
+            UpdateGallerySection();
+            ShowGalleryPage();
+        }
+
+        private void FavoritesButton_Click(object sender, RoutedEventArgs e)
+        {
+            _showFavoritesOnly = true;
+            UpdateGallerySection();
             ShowGalleryPage();
         }
 

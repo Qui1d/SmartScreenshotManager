@@ -166,6 +166,20 @@ namespace SmartScreenshotManager.Data
             DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToLocalTime();
 
         // Explicit metadata updates keep folder scans from overwriting user/AI data.
+        public void SetFavorite(int id, bool isFavorite)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE Screenshots SET IsFavorite = $favorite WHERE Id = $id";
+                command.Parameters.AddWithValue("$favorite", isFavorite);
+                command.Parameters.AddWithValue("$id", id);
+                if (command.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("Screenshot no longer exists in the library.");
+            }
+        }
+
         public void UpdateMetadata(ScreenshotItem item)
         {
             lock (_gate)

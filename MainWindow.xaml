@@ -45,15 +45,18 @@
                         Margin="0,10,0,30" />
 
                     <Button
+                        x:Name="AllScreenshotsButton"
                         Content="All Screenshots"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
                         Click="AllScreenshotsButton_Click" />
 
                     <Button
+                        x:Name="FavoritesButton"
                         Content="Favorites"
                         HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8" />
+                        Margin="0,0,0,8"
+                        Click="FavoritesButton_Click" />
 
                     <Button
                         Content="Gaming"
@@ -112,6 +115,7 @@
 
                 <TextBlock
                     Grid.Column="0"
+                    x:Name="GalleryTitle"
                     Text="All Screenshots"
                     FontSize="30"
                     FontWeight="SemiBold"
@@ -190,14 +194,38 @@
 
                 </Grid.ColumnDefinitions>
 
+                <TextBlock
+                    x:Name="EmptyGalleryText"
+                    Grid.Column="0"
+                    Text="No favorite screenshots yet."
+                    Visibility="Collapsed"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    TextAlignment="Center"
+                    TextWrapping="Wrap"
+                    Margin="20"
+                    Opacity="0.6"
+                    IsHitTestVisible="False" />
+
                 <!-- Gallery -->
                 <GridView
                     x:Name="ScreenshotGridView"
                     Grid.Column="0"
-                    ItemsSource="{x:Bind Screenshots}"
+                    ItemsSource="{x:Bind VisibleScreenshots}"
                     SelectionMode="Single"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Stretch">
+
+                    <GridView.ItemContainerStyle>
+                        <Style TargetType="GridViewItem">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0" />
+                            <Setter Property="MinWidth" Value="0" />
+                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Top" />
+                        </Style>
+                    </GridView.ItemContainerStyle>
 
                     <GridView.ItemsPanel>
 
@@ -205,8 +233,7 @@
 
                             <ItemsWrapGrid
                                 Orientation="Horizontal"
-                                ItemWidth="250"
-                                ItemHeight="225" />
+                                ItemWidth="250" />
 
                         </ItemsPanelTemplate>
 
@@ -218,15 +245,18 @@
                             x:DataType="models:ScreenshotItem">
 
                             <Border
-                                Width="238"
-                                Height="213"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Top"
                                 Margin="6"
                                 Padding="10"
                                 CornerRadius="10"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
-                                DoubleTapped="ScreenshotCard_DoubleTapped">
+                                DoubleTapped="ScreenshotCard_DoubleTapped"
+                                PointerEntered="ScreenshotCard_PointerEntered"
+                                PointerExited="ScreenshotCard_PointerExited"
+                                Unloaded="ScreenshotCard_Unloaded">
 
                                 <!-- Right-click menu -->
                                 <Border.ContextFlyout>
@@ -259,6 +289,16 @@
                                             Tag="{x:Bind FilePath}"
                                             Click="CopyScreenshotMenuItem_Click" />
 
+                                        <MenuFlyoutItem
+                                            Text="{x:Bind FavoriteActionText, Mode=OneWay}"
+                                            Tag="{x:Bind Id}"
+                                            IsEnabled="{x:Bind CanChangeFavorite, Mode=OneWay}"
+                                            Click="FavoriteMenuItem_Click">
+                                            <MenuFlyoutItem.Icon>
+                                                <FontIcon Glyph="{x:Bind FavoriteGlyph, Mode=OneWay}" />
+                                            </MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+
                                         <MenuFlyoutSeparator />
 
                                         <MenuFlyoutItem
@@ -282,14 +322,39 @@
                                     <Image
                                         Grid.Row="0"
                                         Source="{x:Bind FilePath}"
-                                        Width="218"
+                                        HorizontalAlignment="Stretch"
                                         Height="140"
                                         Stretch="UniformToFill" />
+
+                                    <Button
+                                        Grid.Row="0"
+                                        Width="34"
+                                        Height="34"
+                                        Padding="0"
+                                        Margin="6"
+                                        CornerRadius="17"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        Opacity="{x:Bind FavoriteButtonOpacity, Mode=OneWay}"
+                                        IsEnabled="{x:Bind CanChangeFavorite, Mode=OneWay}"
+                                        ToolTipService.ToolTip="{x:Bind FavoriteActionText, Mode=OneWay}"
+                                        AutomationProperties.Name="{x:Bind FavoriteActionText, Mode=OneWay}"
+                                        Tag="{x:Bind Id}"
+                                        Click="FavoriteButton_Click"
+                                        DoubleTapped="FavoriteButton_DoubleTapped"
+                                        GotFocus="FavoriteButton_GotFocus"
+                                        LostFocus="FavoriteButton_LostFocus">
+                                        <FontIcon
+                                            FontFamily="Segoe MDL2 Assets"
+                                            Glyph="{x:Bind FavoriteGlyph, Mode=OneWay}"
+                                            FontSize="18" />
+                                    </Button>
 
                                     <TextBlock
                                         Grid.Row="1"
                                         Text="{x:Bind FileName}"
-                                        Margin="0,9,0,0"
+                                        Margin="0,6,0,0"
                                         FontWeight="SemiBold"
                                         TextTrimming="CharacterEllipsis"
                                         MaxLines="1" />
@@ -297,6 +362,8 @@
                                     <TextBlock
                                         Grid.Row="2"
                                         Text="{x:Bind CreatedAt}"
+                                        MaxLines="1"
+                                        TextTrimming="CharacterEllipsis"
                                         FontSize="12"
                                         Opacity="0.6" />
 
