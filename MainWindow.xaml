@@ -174,8 +174,8 @@
                 x:Name="SearchTextBox"
                 Grid.Row="1"
                 Margin="0,20,0,14"
-                PlaceholderText="Search by filename or category..."
-                AutomationProperties.Name="Search screenshots by filename or category"
+                PlaceholderText="Search by filename, category or text..."
+                AutomationProperties.Name="Search screenshots by filename, category or recognized text"
                 Height="42"
                 TextChanged="SearchTextBox_TextChanged"
                 KeyDown="SearchTextBox_KeyDown" />
@@ -518,10 +518,31 @@
                                     Margin="0,6,0,0" />
 
                                 <TextBlock
-                                    x:Name="DetailsOcrText"
-                                    Text="OCR has not been processed yet"
-                                    TextWrapping="Wrap"
+                                    x:Name="DetailsOcrStatus"
+                                    Text="Status: Pending"
                                     Opacity="0.7" />
+
+                                <TextBlock
+                                    x:Name="DetailsOcrError"
+                                    TextWrapping="Wrap"
+                                    IsTextSelectionEnabled="True"
+                                    Visibility="Collapsed" />
+
+                                <TextBlock
+                                    x:Name="DetailsOcrText"
+                                    Text="Waiting for text recognition..."
+                                    TextWrapping="Wrap"
+                                    IsTextSelectionEnabled="True"
+                                    Opacity="0.7" />
+
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="CopyOcrButton"
+                                        Content="Copy text" IsEnabled="False"
+                                        Click="CopyOcrButton_Click" />
+                                    <Button x:Name="RetryOcrButton"
+                                        Content="Run OCR again" IsEnabled="False"
+                                        Click="RetryOcrButton_Click" />
+                                </StackPanel>
 
                             </StackPanel>
 

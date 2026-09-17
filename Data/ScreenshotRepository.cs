@@ -13,6 +13,7 @@ namespace SmartScreenshotManager.Data
     {
         private readonly string _connectionString;
         private readonly object _gate = new();
+        private bool _initialized;
 
         public ScreenshotRepository(string databasePath)
         {
@@ -32,6 +33,7 @@ namespace SmartScreenshotManager.Data
                 // Match Windows paths, including non-ASCII names, consistently.
                 connection.CreateCollation("PATH", (a, b) =>
                     StringComparer.OrdinalIgnoreCase.Compare(a, b));
+                if (_initialized) return connection;
                 using var command = connection.CreateCommand();
                 command.CommandText = """
                     CREATE TABLE IF NOT EXISTS Screenshots (
@@ -50,9 +52,25 @@ namespace SmartScreenshotManager.Data
                     );
                     CREATE INDEX IF NOT EXISTS IX_Screenshots_FolderPath
                         ON Screenshots(FolderPath);
-                    PRAGMA user_version = 1;
                     """;
                 command.ExecuteNonQuery();
+                using var migration = connection.BeginTransaction();
+                command.Transaction = migration;
+                command.CommandText = "PRAGMA user_version";
+                long version = Convert.ToInt64(command.ExecuteScalar());
+                if (version > 2) throw new InvalidOperationException("This database requires a newer app version.");
+                if (version < 2)
+                {
+                    command.CommandText = """
+                        ALTER TABLE Screenshots ADD COLUMN OcrStatus TEXT NOT NULL DEFAULT 'Pending';
+                        ALTER TABLE Screenshots ADD COLUMN OcrError TEXT NULL;
+                        UPDATE Screenshots SET OcrStatus = 'Processed' WHERE IsProcessed = 1;
+                        PRAGMA user_version = 2;
+                        """;
+                    command.ExecuteNonQuery();
+                }
+                migration.Commit();
+                _initialized = true;
                 return connection;
             }
             catch
@@ -140,7 +158,7 @@ namespace SmartScreenshotManager.Data
             select.Transaction = transaction;
             select.CommandText = """
                 SELECT Id, FilePath, FileName, CreatedAt, AddedAt, OcrText,
-                       Description, Category, Tags, IsFavorite, IsProcessed
+                       Description, Category, Tags, IsFavorite, IsProcessed, OcrStatus, OcrError
                 FROM Screenshots WHERE FilePath = $path;
                 """;
             select.Parameters.AddWithValue("$path", filePath);
@@ -158,12 +176,50 @@ namespace SmartScreenshotManager.Data
                 Category = reader.IsDBNull(7) ? null : reader.GetString(7),
                 Tags = reader.IsDBNull(8) ? null : reader.GetString(8),
                 IsFavorite = reader.GetBoolean(9),
-                IsProcessed = reader.GetBoolean(10)
+                IsProcessed = reader.GetBoolean(10),
+                OcrStatus = reader.GetString(11),
+                OcrError = reader.IsDBNull(12) ? null : reader.GetString(12)
             };
         }
 
         private static DateTime ParseDate(string value) =>
             DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToLocalTime();
+
+        public OcrJobState? GetOcrState(int id)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT Id, FilePath, OcrStatus, OcrText, OcrError FROM Screenshots WHERE Id = $id";
+                command.Parameters.AddWithValue("$id", id);
+                using var reader = command.ExecuteReader();
+                return reader.Read() ? new OcrJobState(reader.GetInt32(0), reader.GetString(1),
+                    reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4)) : null;
+            }
+        }
+
+        public bool SaveOcrState(int id, string expectedPath, string status, string? text, string? error)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    UPDATE Screenshots SET OcrStatus = $status, OcrText = $text,
+                        OcrError = $error, IsProcessed = $processed
+                    WHERE Id = $id AND FilePath = $path;
+                    """;
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$path", expectedPath);
+                command.Parameters.AddWithValue("$status", status);
+                command.Parameters.AddWithValue("$text", (object?)text ?? DBNull.Value);
+                command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+                command.Parameters.AddWithValue("$processed", status == "Processed");
+                return command.ExecuteNonQuery() == 1;
+            }
+        }
 
         // Explicit metadata updates keep folder scans from overwriting user/AI data.
         public void SetCategory(int id, string? category)

@@ -14,6 +14,8 @@ namespace SmartScreenshotManager.Models
         public DateTime AddedAt { get; set; }
 
         public string? OcrText { get; set; }
+        public string OcrStatus { get; set; } = "Pending";
+        public string? OcrError { get; set; }
         public string? Description { get; set; }
         private string? _category;
         private bool _isCategoryUpdating;

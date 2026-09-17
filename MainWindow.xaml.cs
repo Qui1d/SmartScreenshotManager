@@ -38,6 +38,7 @@ namespace SmartScreenshotManager
         private readonly DispatcherQueue _dispatcherQueue;
         private readonly SettingsService _settingsService;
         private readonly ScreenshotRepository _repository;
+        private readonly OcrQueueService _ocrQueue;
         private readonly SemaphoreSlim _storageGate = new(1, 1);
         private int _folderVersion;
         private bool _isClosed;
@@ -68,6 +69,9 @@ namespace SmartScreenshotManager
 
             _repository = new ScreenshotRepository(Path.Combine(
                 ApplicationData.Current.LocalFolder.Path, "screenshots.db"));
+            _ocrQueue = new OcrQueueService(_repository, new ProcessingLog(Path.Combine(
+                ApplicationData.Current.LocalFolder.Path, "processing.log")));
+            _ocrQueue.StateChanged += OcrQueue_StateChanged;
 
             SettingsView.ParentWindow =
                 this;
@@ -460,7 +464,8 @@ namespace SmartScreenshotManager
         private bool MatchesSearch(ScreenshotItem item) =>
             _searchQuery.Length == 0
             || item.FileName.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)
-            || (item.Category?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false);
+            || (item.Category?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (item.OcrText?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false);
 
         private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -798,11 +803,72 @@ namespace SmartScreenshotManager
                     ? "No description yet"
                     : screenshot.Description;
 
-            DetailsOcrText.Text =
-                string.IsNullOrWhiteSpace(
-                    screenshot.OcrText)
-                    ? "OCR has not been processed yet"
-                    : screenshot.OcrText;
+            UpdateOcrDetails(screenshot);
+        }
+
+        private void UpdateOcrDetails(ScreenshotItem screenshot)
+        {
+            DetailsOcrStatus.Text = $"Status: {screenshot.OcrStatus}";
+            DetailsOcrError.Text = screenshot.OcrError ?? string.Empty;
+            DetailsOcrError.Visibility = string.IsNullOrWhiteSpace(screenshot.OcrError)
+                ? Visibility.Collapsed : Visibility.Visible;
+            DetailsOcrText.Text = !string.IsNullOrWhiteSpace(screenshot.OcrText)
+                ? screenshot.OcrText
+                : screenshot.OcrStatus == "Processed" ? "No text found in this image."
+                : screenshot.OcrStatus == "Failed" ? "Text recognition failed. You can retry below."
+                : "Waiting for text recognition...";
+            RetryOcrButton.IsEnabled = screenshot.OcrStatus is not ("Pending" or "Processing");
+            CopyOcrButton.IsEnabled = !string.IsNullOrWhiteSpace(screenshot.OcrText);
+        }
+
+        private void OcrQueue_StateChanged(OcrJobState state)
+        {
+            _dispatcherQueue.TryEnqueue(async () =>
+            {
+                // Wait for folder loading/renaming to finish before applying a notification.
+                await _storageGate.WaitAsync();
+                try
+                {
+                    if (_isClosed) return;
+                    var item = Screenshots.FirstOrDefault(x => x.Id == state.Id
+                        && string.Equals(x.FilePath, state.FilePath, StringComparison.OrdinalIgnoreCase));
+                    if (item == null) return;
+                    item.OcrStatus = state.Status;
+                    item.OcrText = state.Text;
+                    item.OcrError = state.Error;
+                    item.IsProcessed = state.Status == "Processed";
+                    if (string.Equals(_detailsFilePath, item.FilePath, StringComparison.OrdinalIgnoreCase))
+                        UpdateOcrDetails(item);
+                    if (_searchQuery.Length > 0) ApplyCurrentSort();
+                }
+                catch (Exception exception) { ShowStorageError(exception); }
+                finally { _storageGate.Release(); }
+            });
+        }
+
+        private void RetryOcrButton_Click(object sender, RoutedEventArgs e)
+        {
+            var item = Screenshots.FirstOrDefault(x => string.Equals(x.FilePath,
+                _detailsFilePath, StringComparison.OrdinalIgnoreCase));
+            if (item == null || !_ocrQueue.Enqueue(item.Id, force: true)) return;
+            item.OcrStatus = "Pending";
+            item.OcrError = null;
+            UpdateOcrDetails(item);
+        }
+
+        private void CopyOcrButton_Click(object sender, RoutedEventArgs e)
+        {
+            var item = Screenshots.FirstOrDefault(x => string.Equals(x.FilePath,
+                _detailsFilePath, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(item?.OcrText)) return;
+            try
+            {
+                var data = new DataPackage();
+                data.SetText(item.OcrText);
+                Clipboard.SetContent(data);
+                Clipboard.Flush();
+            }
+            catch (Exception exception) { ShowStorageError(exception); }
         }
 
         private async void CopyScreenshotMenuItem_Click(
@@ -1018,6 +1084,8 @@ namespace SmartScreenshotManager
                 if (_isClosed || version != _folderVersion) return;
                 foreach (var item in items) Screenshots.Add(item);
                 ApplyCurrentSort();
+                foreach (var item in items)
+                    if (item.OcrStatus is "Pending" or "Processing") _ocrQueue.Enqueue(item.Id);
             }
             catch (Exception exception)
             {
@@ -1048,6 +1116,7 @@ namespace SmartScreenshotManager
                     || !File.Exists(filePath)) return;
                 Screenshots.Add(screenshot);
                 ApplyCurrentSort();
+                if (screenshot.OcrStatus is "Pending" or "Processing") _ocrQueue.Enqueue(screenshot.Id);
             }
             catch (Exception exception)
             {
@@ -1523,6 +1592,8 @@ namespace SmartScreenshotManager
             WindowEventArgs args)
         {
             _isClosed = true;
+            _ocrQueue.StateChanged -= OcrQueue_StateChanged;
+            _ocrQueue.Stop();
             ++_folderVersion;
             StopWatchingFolder();
 
