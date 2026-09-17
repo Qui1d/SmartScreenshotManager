@@ -169,12 +169,16 @@
 
             </Grid>
 
-            <!-- Search -->
+            <!-- Search within the active section; TextBox supplies its own clear button. -->
             <TextBox
+                x:Name="SearchTextBox"
                 Grid.Row="1"
-                PlaceholderText="Search screenshots..."
+                Margin="0,20,0,14"
+                PlaceholderText="Search by filename or category..."
+                AutomationProperties.Name="Search screenshots by filename or category"
                 Height="42"
-                Margin="0,20,0,14" />
+                TextChanged="SearchTextBox_TextChanged"
+                KeyDown="SearchTextBox_KeyDown" />
 
             <!-- Current screenshot folder and persistent storage errors -->
             <StackPanel Grid.Row="2" Margin="0,0,0,18" Spacing="8">

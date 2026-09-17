@@ -32,6 +32,8 @@ namespace SmartScreenshotManager
         public ObservableCollection<ScreenshotItem> VisibleScreenshots { get; } = new();
         private bool _showFavoritesOnly;
         private string? _selectedCategory;
+        private string _searchQuery = string.Empty;
+        private bool _isGalleryInitialized;
 
         private readonly DispatcherQueue _dispatcherQueue;
         private readonly SettingsService _settingsService;
@@ -78,6 +80,7 @@ namespace SmartScreenshotManager
 
             InitializeGlobalHotkey();
 
+            _isGalleryInitialized = true;
             UpdateGallerySection();
             LoadSavedFolder();
 
@@ -422,7 +425,8 @@ namespace SmartScreenshotManager
         private void ApplyCurrentSort()
         {
             var filtered = Screenshots.Where(x => (!_showFavoritesOnly || x.IsFavorite)
-                && (_selectedCategory == null || x.Category == _selectedCategory));
+                && (_selectedCategory == null || x.Category == _selectedCategory)
+                && MatchesSearch(x));
             var desired = (_sortNewestFirst
                 ? filtered.OrderByDescending(x => x.AddedAt).ThenBy(x => x.Id)
                 : filtered.OrderBy(x => x.AddedAt).ThenBy(x => x.Id)).ToList();
@@ -443,11 +447,35 @@ namespace SmartScreenshotManager
             if (_detailsFilePath != null && !desired.Any(x => string.Equals(
                 x.FilePath, _detailsFilePath, StringComparison.OrdinalIgnoreCase)))
                 CloseDetailsPanel();
-            EmptyGalleryText.Text = _showFavoritesOnly
-                ? "No favorite screenshots yet."
-                : $"No screenshots in {_selectedCategory} yet.";
-            EmptyGalleryText.Visibility = (_showFavoritesOnly || _selectedCategory != null)
+            bool hasSearch = _searchQuery.Length > 0;
+            EmptyGalleryText.Text = hasSearch
+                ? "No matching screenshots in this section."
+                : _showFavoritesOnly
+                    ? "No favorite screenshots yet."
+                    : $"No screenshots in {_selectedCategory} yet.";
+            EmptyGalleryText.Visibility = (hasSearch || _showFavoritesOnly || _selectedCategory != null)
                 && VisibleScreenshots.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private bool MatchesSearch(ScreenshotItem item) =>
+            _searchQuery.Length == 0
+            || item.FileName.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)
+            || (item.Category?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false);
+
+        private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is not TextBox textBox) return;
+            _searchQuery = textBox.Text.Trim();
+            // XAML can raise TextChanged before the rest of the named controls exist.
+            if (!_isGalleryInitialized) return;
+            ApplyCurrentSort();
+        }
+
+        private void SearchTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key != Windows.System.VirtualKey.Escape) return;
+            SearchTextBox.Text = string.Empty;
+            e.Handled = true;
         }
 
         private void UpdateGallerySection()
