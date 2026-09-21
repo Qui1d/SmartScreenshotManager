@@ -77,6 +77,7 @@ namespace SmartScreenshotManager
                 ApplicationData.Current.LocalFolder.Path, "processing.log"));
             InitializeSemanticSearch(processingLog);
             InitializeActivity(processingLog);
+            InitializeIndexSummary();
             _ocrQueue = new OcrQueueService(_repository, processingLog);
             _ocrQueue.StateChanged += OcrQueue_StateChanged;
             _aiQueue = new AiQueueService(_repository, processingLog);
@@ -443,6 +444,7 @@ namespace SmartScreenshotManager
 
         private void ApplyCurrentSort()
         {
+            ScheduleIndexSummary();
             var filtered = Screenshots.Where(x => (!_showFavoritesOnly || x.IsFavorite)
                 && (_selectedCategory == null || x.Category == _selectedCategory)
                 && MatchesSearch(x));
@@ -960,6 +962,7 @@ namespace SmartScreenshotManager
                         _aiQueue.Enqueue(item.Id, automatic: true);
                     if (string.Equals(_detailsFilePath, item.FilePath, StringComparison.OrdinalIgnoreCase))
                         UpdateOcrDetails(item);
+                    ScheduleIndexSummary();
                     if (_searchQuery.Length > 0) ApplyCurrentSort();
                 }
                 catch (Exception exception) { ShowStorageError(exception); }
@@ -1725,6 +1728,7 @@ namespace SmartScreenshotManager
         {
             _isClosed = true;
             _activityTimer?.Stop();
+            _indexSummaryTimer?.Stop();
             _semanticCancellation?.Cancel();
             _ocrQueue.StateChanged -= OcrQueue_StateChanged;
             _ocrQueue.Stop();
@@ -1810,6 +1814,8 @@ namespace SmartScreenshotManager
         private void InvalidateSemanticResults(bool cancelIndex = false)
         {
             _semanticGeneration++;
+            _hasSearchStatus = false;
+            if (!_semanticBusy) CompactSearchStatus.Text = _compactIndexStatus;
             _semanticScores.Clear();
             _semanticHashes.Clear();
             if (!_indexing || cancelIndex) _semanticCancellation?.Cancel();
@@ -1823,6 +1829,7 @@ namespace SmartScreenshotManager
             InvalidateSemanticResults();
             SortButton.IsEnabled = !SemanticMode;
             SemanticSearchButton.IsEnabled = SemanticMode && !_semanticBusy;
+            SemanticSearchButton.Visibility = SemanticMode ? Visibility.Visible : Visibility.Collapsed;
             ApplyCurrentSort();
         }
 
@@ -1836,9 +1843,13 @@ namespace SmartScreenshotManager
             _semanticCancellation = new CancellationTokenSource();
             _semanticBusy = true;
             _indexing = indexing;
+            IndexProgressBar.Value = 0;
+            IndexProgressBar.Visibility = indexing ? Visibility.Visible : Visibility.Collapsed;
             IndexSemanticButton.IsEnabled = false;
             SemanticSearchButton.IsEnabled = false;
             CancelSemanticButton.IsEnabled = true;
+            CancelSemanticButton.Visibility = Visibility.Visible;
+            CompactSearchStatus.Text = indexing ? "Updating index…" : "Searching…";
             return _semanticCancellation.Token;
         }
 
@@ -1847,9 +1858,12 @@ namespace SmartScreenshotManager
             _semanticBusy = false;
             _indexing = false;
             if (_isClosed) return;
-            IndexSemanticButton.IsEnabled = true;
+            IndexSemanticButton.IsEnabled = !_indexSummaryKnown || _indexUpdatesNeeded > 0;
+            IndexProgressBar.Visibility = Visibility.Collapsed;
+            ScheduleIndexSummary();
             SemanticSearchButton.IsEnabled = SemanticMode;
             CancelSemanticButton.IsEnabled = false;
+            CancelSemanticButton.Visibility = Visibility.Collapsed;
             SettingsView.RefreshAiUsage();
         }
 
@@ -1859,16 +1873,17 @@ namespace SmartScreenshotManager
             var documents = SemanticDocuments(false);
             if (documents.Count == 0)
             {
-                SemanticStatusText.Text = "No text to index. Run OCR or AI analysis on screenshots first.";
+                SetSearchStatus("No text to index. Run OCR or AI analysis on screenshots first.");
                 return;
             }
+            IndexProgressBar.Maximum = Math.Max(1, documents.Count);
             var token = BeginSemanticWork(true);
             int saved = 0, skipped = 0;
             try
             {
                 var config = _settingsService.GetAiConfiguration();
                 if (!config.CanAnalyze) throw new InvalidOperationException("Enable AI and save an API key in Settings first.");
-                SemanticStatusText.Text = $"Checking {documents.Count} screenshots…";
+                SetSearchStatus($"Checking {documents.Count} screenshots…");
                 await Task.Run(async () =>
                 {
                     // Checks the extension before any paid work.
@@ -1876,43 +1891,52 @@ namespace SmartScreenshotManager
                     foreach (var original in documents)
                     {
                         token.ThrowIfCancellationRequested();
-                        var document = _repository.GetSemanticDocument(original.Id);
-                        if (document == null || !File.Exists(document.FilePath)) { skipped++; continue; }
-                        if (current.Contains(document.Id) && original.Fingerprint == document.Fingerprint)
-                        { skipped++; continue; }
-                        var vector = await _embeddings.EmbedAsync(document.Text, config, token);
-                        token.ThrowIfCancellationRequested();
-                        var latest = _repository.GetSemanticDocument(document.Id);
-                        if (latest?.Fingerprint == document.Fingerprint && File.Exists(latest.FilePath))
+                        try
                         {
-                            _vectors.Save(document, vector);
-                            saved++;
+                            var document = _repository.GetSemanticDocument(original.Id);
+                            if (document == null || !File.Exists(document.FilePath)) { skipped++; continue; }
+                            if (current.Contains(document.Id) && original.Fingerprint == document.Fingerprint)
+                            { skipped++; continue; }
+                            var vector = await _embeddings.EmbedAsync(document.Text, config, token);
+                            token.ThrowIfCancellationRequested();
+                            var latest = _repository.GetSemanticDocument(document.Id);
+                            if (latest?.Fingerprint == document.Fingerprint && File.Exists(latest.FilePath))
+                            {
+                                _vectors.Save(document, vector);
+                                saved++;
+                            }
+                            else skipped++;
                         }
-                        else skipped++;
-                        int done = saved + skipped;
-                        _dispatcherQueue.TryEnqueue(() =>
+                        finally
                         {
-                            if (!_isClosed && _semanticBusy && _indexing && !token.IsCancellationRequested)
-                                SemanticStatusText.Text = $"Indexing: {done}/{documents.Count}. You can cancel; completed items stay saved.";
-                        });
+                            int done = saved + skipped;
+                            _dispatcherQueue.TryEnqueue(() =>
+                            {
+                                if (!_isClosed && _semanticBusy && _indexing && !token.IsCancellationRequested)
+                                {
+                                    IndexProgressBar.Value = done;
+                                    SetSearchStatus($"Indexing: {done}/{documents.Count}. You can cancel; completed items stay saved.");
+                                }
+                            });
+                        }
                     }
                 }, token);
                 _semanticLog?.Write($"Semantic index: {saved} saved, {skipped} skipped");
-                if (!_isClosed) SemanticStatusText.Text = $"Index ready: {saved} updated, {skipped} unchanged or skipped. Enable Search by meaning and enter a phrase.";
+                if (!_isClosed) SetSearchStatus($"Index ready: {saved} updated, {skipped} unchanged or skipped. Enable Search by meaning and enter a phrase.");
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 _semanticLog?.Write($"Semantic index cancelled: {saved} saved");
-                if (!_isClosed) SemanticStatusText.Text = $"Indexing stopped; {saved} items saved. Run Update index to continue.";
+                if (!_isClosed) SetSearchStatus($"Indexing stopped; {saved} items saved. Run Update index to continue.");
             }
             catch (OperationCanceledException)
             {
-                if (!_isClosed) SemanticStatusText.Text = $"Request timed out; {saved} items saved. Run Update index to continue.";
+                if (!_isClosed) SetSearchStatus($"Request timed out; {saved} items saved. Run Update index to continue.");
             }
             catch (Exception exception)
             {
                 _semanticLog?.Write($"Semantic index failed: {exception.GetType().Name}");
-                if (!_isClosed) SemanticStatusText.Text = $"{saved} items saved. " + SemanticError(exception);
+                if (!_isClosed) SetSearchStatus($"{saved} items saved. " + SemanticError(exception));
             }
             finally { EndSemanticWork(); }
         }
@@ -1923,7 +1947,7 @@ namespace SmartScreenshotManager
             string query = _searchQuery;
             if (string.IsNullOrWhiteSpace(query)) return;
             if (System.Text.Encoding.UTF8.GetByteCount(query) > 6000)
-            { SemanticStatusText.Text = "Please use a shorter search phrase."; return; }
+            { SetSearchStatus("Please use a shorter search phrase."); return; }
             var documents = SemanticDocuments(true);
             int generation = ++_semanticGeneration;
             var token = BeginSemanticWork(false);
@@ -1932,7 +1956,7 @@ namespace SmartScreenshotManager
             ApplyCurrentSort();
             try
             {
-                SemanticStatusText.Text = "Text matches are shown. Searching for additional semantic matches…";
+                SetSearchStatus("Text matches are shown. Searching for additional semantic matches…");
                 var config = _settingsService.GetAiConfiguration();
                 if (!config.CanAnalyze) throw new InvalidOperationException("Enable AI and save an API key in Settings first.");
                 var currentIds = await Task.Run(() => _vectors.GetCurrentIds(documents), token);
@@ -1955,20 +1979,20 @@ namespace SmartScreenshotManager
                 _semanticScores = scores;
                 _semanticHashes = eligible.ToDictionary(x => x.Id, x => x.Fingerprint);
                 ApplyCurrentSort();
-                SemanticStatusText.Text = $"{VisibleScreenshots.Count} results: text matches first, followed by semantic matches. {documents.Count - eligible.Count} screenshots need indexing. Semantic results may include weak matches.";
+                SetSearchStatus($"{VisibleScreenshots.Count} results: text matches first, followed by semantic matches. {documents.Count - eligible.Count} screenshots need indexing. Semantic results may include weak matches.");
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                if (!_isClosed) SemanticStatusText.Text = "Search cancelled. Press Enter to search again.";
+                if (!_isClosed) SetSearchStatus("Search cancelled. Press Enter to search again.");
             }
             catch (OperationCanceledException)
             {
-                if (!_isClosed) SemanticStatusText.Text = "Search request timed out. Try again later.";
+                if (!_isClosed) SetSearchStatus("Search request timed out. Try again later.");
             }
             catch (Exception exception)
             {
                 _semanticLog?.Write($"Semantic search failed: {exception.GetType().Name}");
-                if (!_isClosed && generation == _semanticGeneration) SemanticStatusText.Text = SemanticError(exception);
+                if (!_isClosed && generation == _semanticGeneration) SetSearchStatus(SemanticError(exception));
             }
             finally { EndSemanticWork(); }
         }
@@ -2133,6 +2157,93 @@ namespace SmartScreenshotManager
                 _activityLog?.Write($"Activity retry failed: {exception.GetType().Name}");
                 if (!_isClosed) ActivityMessageText.Text = "Could not queue the retry.";
             }
+        }
+
+        private DispatcherTimer? _indexSummaryTimer;
+        private bool _indexSummaryReading;
+        private bool _indexSummaryKnown;
+        private int _indexUpdatesNeeded;
+        private int _indexSummaryRevision;
+
+        private void InitializeIndexSummary()
+        {
+            _indexSummaryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+            _indexSummaryTimer.Tick += (_, _) => RefreshIndexSummary();
+            ScheduleIndexSummary();
+        }
+
+        private void ScheduleIndexSummary()
+        {
+            if (_isClosed || _indexSummaryTimer == null) return;
+            _indexSummaryRevision++;
+            _indexSummaryTimer.Stop();
+            _indexSummaryTimer.Start();
+        }
+
+        private async void RefreshIndexSummary()
+        {
+            _indexSummaryTimer?.Stop();
+            if (_isClosed || _vectors == null) return;
+            if (_indexSummaryReading)
+            {
+                _indexSummaryTimer?.Start();
+                return;
+            }
+            _indexSummaryReading = true;
+            int revision = _indexSummaryRevision;
+            int folderVersion = _folderVersion;
+            try
+            {
+                var documents = SemanticDocuments(false);
+                int noText = Screenshots.Count - documents.Count;
+                var status = documents.Count == 0 ? (Current: 0, New: 0, Changed: 0)
+                    : await Task.Run(() => _vectors.GetIndexStatus(documents));
+                if (_isClosed || folderVersion != _folderVersion || revision != _indexSummaryRevision) return;
+                _indexUpdatesNeeded = status.New + status.Changed;
+                _indexSummaryKnown = true;
+                _compactIndexStatus = $"{status.Current} ready · {_indexUpdatesNeeded} to update";
+                if (!_semanticBusy && !_hasSearchStatus) CompactSearchStatus.Text = _compactIndexStatus;
+                IndexSummaryText.Text = string.IsNullOrEmpty(_currentFolderPath)
+                    ? "Select a screenshot folder in Settings."
+                    : $"Folder index: {status.Current} ready · {status.New} new · {status.Changed} outdated · {noText} without text."
+                        + (noText > 0 ? " Run OCR or AI analysis for screenshots without text." : "");
+                IndexSemanticButton.Content = _indexUpdatesNeeded == 0 ? "Index is up to date"
+                    : $"Update index ({_indexUpdatesNeeded})";
+                IndexSemanticButton.IsEnabled = !_semanticBusy && _indexUpdatesNeeded > 0;
+            }
+            catch (Exception exception)
+            {
+                if (!_isClosed && folderVersion == _folderVersion && revision == _indexSummaryRevision)
+                {
+                    _indexSummaryKnown = false;
+                    IndexSummaryText.Text = "Could not check the folder index. " + SemanticError(exception);
+                    IndexSemanticButton.Content = "Update index";
+                    if (!_semanticBusy) CompactSearchStatus.Text = "Index unavailable · see ⓘ";
+                    IndexSemanticButton.IsEnabled = !_semanticBusy;
+                }
+            }
+            finally { _indexSummaryReading = false; }
+        }
+
+        private string _compactIndexStatus = "Checking index…";
+        private bool _hasSearchStatus;
+        private void SetSearchStatus(string message)
+        {
+            SemanticStatusText.Text = message;
+            _hasSearchStatus = true;
+            string compact;
+            if (message.Contains("Daily AI request limit", StringComparison.OrdinalIgnoreCase))
+                compact = "Daily limit reached · see ⓘ";
+            else if (message.StartsWith("Index ready:")) compact = "Index updated";
+            else if (message.StartsWith("Indexing:")) compact = message.Split('.')[0];
+            else if (message.StartsWith("Checking ")) compact = "Checking index…";
+            else if (message.Contains("results: text matches first")) compact = $"{VisibleScreenshots.Count} results";
+            else if (message.StartsWith("Text matches are shown")) compact = "Searching…";
+            else if (message.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
+                || message.StartsWith("Indexing stopped")) compact = "Stopped · see ⓘ";
+            else if (message.Contains("timed out", StringComparison.OrdinalIgnoreCase)) compact = "Request timed out · see ⓘ";
+            else compact = "Search / index: see ⓘ for details";
+            CompactSearchStatus.Text = compact;
         }
 
     }

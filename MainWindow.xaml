@@ -184,19 +184,41 @@
 
             <!-- Current screenshot folder and persistent storage errors -->
             <StackPanel Grid.Row="2" Margin="0,0,0,18" Spacing="8">
-                <CheckBox x:Name="SemanticModeCheckBox" Content="Search by meaning"
-                    Checked="SemanticMode_Changed" Unchecked="SemanticMode_Changed" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button x:Name="SemanticSearchButton" Content="Search by meaning" IsEnabled="False"
-                        Click="SemanticSearchButton_Click" />
-                    <Button x:Name="IndexSemanticButton" Content="Update folder index (API)"
-                        Click="IndexSemanticButton_Click" />
-                    <Button x:Name="CancelSemanticButton" Content="Cancel" IsEnabled="False"
-                        Click="CancelSemanticButton_Click" />
-                </StackPanel>
-                <TextBlock Text="Indexing sends OCR, descriptions and tags to OpenAI. Search sends your phrase. Both use your API balance and daily request limit. Unchanged indexed items are skipped."
-                    TextWrapping="Wrap" Opacity="0.6" />
-                <TextBlock x:Name="SemanticStatusText" TextWrapping="Wrap" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <CheckBox x:Name="SemanticModeCheckBox" Content="Smart search"
+                            Checked="SemanticMode_Changed" Unchecked="SemanticMode_Changed"
+                            ToolTipService.ToolTip="Find screenshots by meaning. Press Enter to search using the API." />
+                        <Button x:Name="SemanticSearchButton" Content="Search" IsEnabled="False"
+                            Visibility="Collapsed" Click="SemanticSearchButton_Click" />
+                        <Button x:Name="CancelSemanticButton" Content="Cancel" IsEnabled="False"
+                            Visibility="Collapsed" Click="CancelSemanticButton_Click" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="&#xE946;" FontFamily="Segoe Fluent Icons"
+                        AutomationProperties.Name="Search and index information" ToolTipService.ToolTip="Search and index details">
+                        <Button.Flyout>
+                            <Flyout>
+                                <StackPanel Width="280" Spacing="12">
+                                    <TextBlock Text="Smart search" FontWeight="SemiBold" />
+                                    <TextBlock Text="Text matches appear instantly. Enable Smart search and press Enter to add matches by meaning."
+                                        TextWrapping="Wrap" />
+                                    <TextBlock x:Name="IndexSummaryText" Text="Checking index…" TextWrapping="Wrap" />
+                                    <Button x:Name="IndexSemanticButton" Content="Update index" Click="IndexSemanticButton_Click" />
+                                    <TextBlock Text="Search and index updates use your OpenAI API balance and daily limit. Indexing sends OCR, descriptions and tags; search sends your phrase."
+                                        TextWrapping="Wrap" Opacity="0.7" />
+                                    <TextBlock x:Name="SemanticStatusText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                </Grid>
+                <TextBlock x:Name="CompactSearchStatus" Text="Checking index…" Opacity="0.65"
+                    TextTrimming="CharacterEllipsis" />
+                <ProgressBar x:Name="IndexProgressBar" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />
                 <TextBlock
                     x:Name="SelectedFolderText"
                     Text="No screenshot folder selected"

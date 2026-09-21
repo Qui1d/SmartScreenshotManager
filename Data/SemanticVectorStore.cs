@@ -61,6 +61,26 @@ namespace SmartScreenshotManager.Data
             }
         }
 
+        public (int Current, int New, int Changed) GetIndexStatus(IReadOnlyList<SemanticDocument> documents)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT Fingerprint FROM Documents WHERE Id=$id";
+                var id = command.Parameters.Add("$id", SqliteType.Integer);
+                int current = 0, missing = 0, changed = 0;
+                foreach (var document in documents)
+                {
+                    id.Value = document.Id;
+                    if (command.ExecuteScalar() is not string hash) missing++;
+                    else if (hash == document.Fingerprint) current++;
+                    else changed++;
+                }
+                return (current, missing, changed);
+            }
+        }
+
         public void Save(SemanticDocument document, float[] vector)
         {
             lock (_gate)
