@@ -58,7 +58,7 @@ namespace SmartScreenshotManager.Data
                 command.Transaction = migration;
                 command.CommandText = "PRAGMA user_version";
                 long version = Convert.ToInt64(command.ExecuteScalar());
-                if (version > 2) throw new InvalidOperationException("This database requires a newer app version.");
+                if (version > 3) throw new InvalidOperationException("This database requires a newer app version.");
                 if (version < 2)
                 {
                     command.CommandText = """
@@ -69,6 +69,25 @@ namespace SmartScreenshotManager.Data
                         """;
                     command.ExecuteNonQuery();
                 }
+                if (version < 3)
+                {
+                    command.CommandText = """
+                        ALTER TABLE Screenshots ADD COLUMN CategoryIsManual INTEGER NOT NULL DEFAULT 0;
+                        ALTER TABLE Screenshots ADD COLUMN AiStatus TEXT NOT NULL DEFAULT 'NotProcessed';
+                        ALTER TABLE Screenshots ADD COLUMN AiError TEXT NULL;
+                        UPDATE Screenshots SET CategoryIsManual = 1
+                            WHERE Category IS NOT NULL AND trim(Category) <> '';
+                        PRAGMA user_version = 3;
+                        """;
+                    command.ExecuteNonQuery();
+                }
+                // Interrupted paid requests are not resent automatically on restart.
+                command.CommandText = """
+                    UPDATE Screenshots SET AiStatus = 'Cancelled',
+                        AiError = 'Previous analysis was interrupted. Run AI analysis again if needed.'
+                    WHERE AiStatus IN ('Pending', 'Processing');
+                    """;
+                command.ExecuteNonQuery();
                 migration.Commit();
                 _initialized = true;
                 return connection;
@@ -152,13 +171,13 @@ namespace SmartScreenshotManager.Data
             insert.Parameters.AddWithValue("$name", Path.GetFileName(filePath));
             insert.Parameters.AddWithValue("$created", File.GetCreationTimeUtc(filePath).ToString("O"));
             insert.Parameters.AddWithValue("$added", addedAt.ToUniversalTime().ToString("O"));
-            insert.ExecuteNonQuery();
+            bool newlyImported = insert.ExecuteNonQuery() == 1;
 
             using var select = connection.CreateCommand();
             select.Transaction = transaction;
             select.CommandText = """
                 SELECT Id, FilePath, FileName, CreatedAt, AddedAt, OcrText,
-                       Description, Category, Tags, IsFavorite, IsProcessed, OcrStatus, OcrError
+                       Description, Category, Tags, IsFavorite, IsProcessed, OcrStatus, OcrError, CategoryIsManual, AiStatus, AiError
                 FROM Screenshots WHERE FilePath = $path;
                 """;
             select.Parameters.AddWithValue("$path", filePath);
@@ -166,6 +185,7 @@ namespace SmartScreenshotManager.Data
             if (!reader.Read()) throw new InvalidOperationException("Screenshot was not saved.");
             return new ScreenshotItem
             {
+                WasAddedToLibrary = newlyImported,
                 Id = reader.GetInt32(0),
                 FilePath = reader.GetString(1),
                 FileName = reader.GetString(2),
@@ -178,7 +198,10 @@ namespace SmartScreenshotManager.Data
                 IsFavorite = reader.GetBoolean(9),
                 IsProcessed = reader.GetBoolean(10),
                 OcrStatus = reader.GetString(11),
-                OcrError = reader.IsDBNull(12) ? null : reader.GetString(12)
+                OcrError = reader.IsDBNull(12) ? null : reader.GetString(12),
+                CategoryIsManual = reader.GetBoolean(13),
+                AiStatus = reader.GetString(14),
+                AiError = reader.IsDBNull(15) ? null : reader.GetString(15)
             };
         }
 
@@ -231,11 +254,79 @@ namespace SmartScreenshotManager.Data
             {
                 using var connection = Open();
                 using var command = connection.CreateCommand();
-                command.CommandText = "UPDATE Screenshots SET Category = $category WHERE Id = $id";
+                command.CommandText = "UPDATE Screenshots SET Category = $category, CategoryIsManual = 1 WHERE Id = $id";
                 command.Parameters.AddWithValue("$category", (object?)category ?? DBNull.Value);
                 command.Parameters.AddWithValue("$id", id);
                 if (command.ExecuteNonQuery() != 1)
                     throw new InvalidOperationException("Screenshot no longer exists in the library.");
+            }
+        }
+
+        public void AllowAiCategory(int id)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE Screenshots SET CategoryIsManual = 0 WHERE Id = $id";
+                command.Parameters.AddWithValue("$id", id);
+                if (command.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("Screenshot no longer exists in the library.");
+            }
+        }
+
+        public AiJobState? GetAiState(int id)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT Id, FilePath, AiStatus, AiError, Description, Tags, Category, CategoryIsManual, OcrText
+                    FROM Screenshots WHERE Id = $id;
+                    """;
+                command.Parameters.AddWithValue("$id", id);
+                using var reader = command.ExecuteReader();
+                return reader.Read() ? new AiJobState(reader.GetInt32(0), reader.GetString(1), reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
+                    reader.GetBoolean(7), reader.IsDBNull(8) ? null : reader.GetString(8)) : null;
+            }
+        }
+
+        public bool SaveAiStatus(int id, string path, string status, string? error)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE Screenshots SET AiStatus = $status, AiError = $error WHERE Id = $id AND FilePath = $path";
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$path", path);
+                command.Parameters.AddWithValue("$status", status);
+                command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+                return command.ExecuteNonQuery() == 1;
+            }
+        }
+
+        public bool SaveAiResult(int id, string path, AiAnalysis result)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    UPDATE Screenshots SET Description = $description, Tags = $tags,
+                        Category = CASE WHEN CategoryIsManual = 1 THEN Category ELSE $category END,
+                        AiStatus = 'Processed', AiError = NULL
+                    WHERE Id = $id AND FilePath = $path;
+                    """;
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$path", path);
+                command.Parameters.AddWithValue("$description", result.Description);
+                command.Parameters.AddWithValue("$tags", string.Join(", ", result.Tags));
+                command.Parameters.AddWithValue("$category", result.Category);
+                return command.ExecuteNonQuery() == 1;
             }
         }
 

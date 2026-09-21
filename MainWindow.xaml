@@ -174,8 +174,8 @@
                 x:Name="SearchTextBox"
                 Grid.Row="1"
                 Margin="0,20,0,14"
-                PlaceholderText="Search by filename, category or text..."
-                AutomationProperties.Name="Search screenshots by filename, category or recognized text"
+                PlaceholderText="Search screenshots, text or tags..."
+                AutomationProperties.Name="Search screenshots by filename, category, recognized text, description or tags"
                 Height="42"
                 TextChanged="SearchTextBox_TextChanged"
                 KeyDown="SearchTextBox_KeyDown" />
@@ -339,6 +339,10 @@
                                                 Text="Clear category"
                                                 Tag="{x:Bind Id}"
                                                 Click="ClearCategoryMenuItem_Click" />
+                                            <MenuFlyoutItem
+                                                Text="Allow AI category updates"
+                                                Tag="{x:Bind Id}"
+                                                Click="AllowAiCategoryMenuItem_Click" />
                                         </MenuFlyoutSubItem>
 
                                         <MenuFlyoutSeparator />
@@ -501,6 +505,8 @@
                                     Opacity="0.7"
                                     TextWrapping="Wrap" />
 
+                                <TextBlock x:Name="DetailsCategorySource" Opacity="0.6" TextWrapping="Wrap" />
+
                                 <TextBlock
                                     Text="Description"
                                     FontWeight="SemiBold"
@@ -511,6 +517,15 @@
                                     Text="No description yet"
                                     TextWrapping="Wrap"
                                     Opacity="0.7" />
+
+                                <TextBlock Text="Tags" FontWeight="SemiBold" />
+                                <TextBlock x:Name="DetailsTags" Text="No tags yet" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                <TextBlock Text="AI analysis" FontWeight="SemiBold" />
+                                <TextBlock x:Name="DetailsAiStatus" Text="NotProcessed" Opacity="0.7" />
+                                <TextBlock x:Name="DetailsAiError" TextWrapping="Wrap" Visibility="Collapsed" />
+                                <Button x:Name="AnalyzeAiButton" Content="Analyze with AI"
+                                    HorizontalAlignment="Left" Click="AnalyzeAiButton_Click" />
+                                <TextBlock x:Name="DetailsAiHint" TextWrapping="Wrap" Opacity="0.6" />
 
                                 <TextBlock
                                     Text="OCR Text"

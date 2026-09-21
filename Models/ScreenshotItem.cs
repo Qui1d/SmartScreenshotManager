@@ -6,6 +6,8 @@ namespace SmartScreenshotManager.Models
     public class ScreenshotItem : INotifyPropertyChanged
     {
         public int Id { get; set; }
+        // Transient import result; not a database column.
+        public bool WasAddedToLibrary { get; set; }
 
         public string FilePath { get; set; } = string.Empty;
         public string FileName { get; set; } = string.Empty;
@@ -17,6 +19,9 @@ namespace SmartScreenshotManager.Models
         public string OcrStatus { get; set; } = "Pending";
         public string? OcrError { get; set; }
         public string? Description { get; set; }
+        public string AiStatus { get; set; } = "NotProcessed";
+        public string? AiError { get; set; }
+        public bool CategoryIsManual { get; set; }
         private string? _category;
         private bool _isCategoryUpdating;
 

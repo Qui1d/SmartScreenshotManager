@@ -9,6 +9,7 @@ using SmartScreenshotManager.Services;
 using SmartScreenshotManager.Views;
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -39,6 +40,8 @@ namespace SmartScreenshotManager
         private readonly SettingsService _settingsService;
         private readonly ScreenshotRepository _repository;
         private readonly OcrQueueService _ocrQueue;
+        private readonly AiQueueService _aiQueue;
+        private readonly HashSet<int> _automaticAiCandidates = new();
         private readonly SemaphoreSlim _storageGate = new(1, 1);
         private int _folderVersion;
         private bool _isClosed;
@@ -69,9 +72,16 @@ namespace SmartScreenshotManager
 
             _repository = new ScreenshotRepository(Path.Combine(
                 ApplicationData.Current.LocalFolder.Path, "screenshots.db"));
-            _ocrQueue = new OcrQueueService(_repository, new ProcessingLog(Path.Combine(
-                ApplicationData.Current.LocalFolder.Path, "processing.log")));
+            var processingLog = new ProcessingLog(Path.Combine(
+                ApplicationData.Current.LocalFolder.Path, "processing.log"));
+            _ocrQueue = new OcrQueueService(_repository, processingLog);
             _ocrQueue.StateChanged += OcrQueue_StateChanged;
+            _aiQueue = new AiQueueService(_repository, processingLog);
+            _aiQueue.StateChanged += AiQueue_StateChanged;
+            SettingsView.AiSettingsChanged += SettingsView_AiSettingsChanged;
+            try { _aiQueue.Configure(_settingsService.GetAiConfiguration()); }
+            catch { ShowStorageError(new InvalidOperationException("Could not load the saved AI key. Check Settings.")); }
+
 
             SettingsView.ParentWindow =
                 this;
@@ -465,7 +475,9 @@ namespace SmartScreenshotManager
             _searchQuery.Length == 0
             || item.FileName.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)
             || (item.Category?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false)
-            || (item.OcrText?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false);
+            || (item.OcrText?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (item.Description?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (item.Tags?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false);
 
         private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -511,7 +523,7 @@ namespace SmartScreenshotManager
         private async Task ChangeCategoryAsync(int id, string? category)
         {
             var item = Screenshots.FirstOrDefault(x => x.Id == id);
-            if (item == null || item.IsCategoryUpdating || item.Category == category) return;
+            if (item == null || item.IsCategoryUpdating || (item.Category == category && item.CategoryIsManual)) return;
             int version = _folderVersion;
             item.IsCategoryUpdating = true;
             await _storageGate.WaitAsync();
@@ -520,10 +532,11 @@ namespace SmartScreenshotManager
                 if (_isClosed || version != _folderVersion || !Screenshots.Contains(item)) return;
                 await Task.Run(() => _repository.SetCategory(id, category));
                 item.Category = category;
+                item.CategoryIsManual = true;
                 if (!_isClosed && version == _folderVersion)
                 {
                     if (string.Equals(_detailsFilePath, item.FilePath, StringComparison.OrdinalIgnoreCase))
-                        DetailsCategory.Text = category ?? "Not assigned";
+                        UpdateAiDetails(item);
                     ApplyCurrentSort();
                 }
             }
@@ -804,6 +817,85 @@ namespace SmartScreenshotManager
                     : screenshot.Description;
 
             UpdateOcrDetails(screenshot);
+            UpdateAiDetails(screenshot);
+        }
+
+        private void SettingsView_AiSettingsChanged(AiConfiguration configuration)
+        {
+            _automaticAiCandidates.Clear();
+            _aiQueue.Configure(configuration);
+            var item = Screenshots.FirstOrDefault(x => x.FilePath == _detailsFilePath);
+            if (item != null) UpdateAiDetails(item);
+        }
+
+        private void UpdateAiDetails(ScreenshotItem item)
+        {
+            DetailsCategory.Text = item.Category ?? "Not assigned";
+            DetailsCategorySource.Text = item.CategoryIsManual
+                ? "Manual category: AI will not change it."
+                : "AI category updates allowed.";
+            DetailsDescription.Text = item.Description ?? "No description yet";
+            DetailsTags.Text = string.IsNullOrWhiteSpace(item.Tags) ? "No tags yet" : item.Tags;
+            bool busy = _aiQueue.IsPending(item.Id);
+            DetailsAiStatus.Text = "Status: " + (busy && item.AiStatus != "Processing" ? "Pending" : item.AiStatus);
+            DetailsAiError.Text = item.AiError ?? string.Empty;
+            DetailsAiError.Visibility = string.IsNullOrWhiteSpace(item.AiError) ? Visibility.Collapsed : Visibility.Visible;
+            AnalyzeAiButton.IsEnabled = _aiQueue.CanAnalyze && !busy;
+            DetailsAiHint.Text = _aiQueue.CanAnalyze
+                ? "Sends this image and recognized text to OpenAI. Each run uses your API balance."
+                : "Enable AI analysis and save an API key in Settings.";
+        }
+
+        private void AnalyzeAiButton_Click(object sender, RoutedEventArgs e)
+        {
+            var item = Screenshots.FirstOrDefault(x => x.FilePath == _detailsFilePath);
+            if (item == null) return;
+            _automaticAiCandidates.Remove(item.Id);
+            if (_aiQueue.Enqueue(item.Id)) UpdateAiDetails(item);
+        }
+
+        private void AiQueue_StateChanged(int id)
+        {
+            _dispatcherQueue.TryEnqueue(async () =>
+            {
+                await _storageGate.WaitAsync();
+                try
+                {
+                    if (_isClosed) return;
+                    // Reload current database values, including any manual edit made in flight.
+                    var state = await Task.Run(() => _repository.GetAiState(id));
+                    if (state == null || _isClosed) return;
+                    var item = Screenshots.FirstOrDefault(x => x.Id == id);
+                    if (item == null) return;
+                    item.Description = state.Description;
+                    item.Tags = state.Tags;
+                    item.Category = state.Category;
+                    item.CategoryIsManual = state.CategoryIsManual;
+                    item.AiStatus = state.Status;
+                    item.AiError = state.Error;
+                    if (item.FilePath == _detailsFilePath) UpdateAiDetails(item);
+                    ApplyCurrentSort();
+                }
+                catch (Exception exception) { ShowStorageError(exception); }
+                finally { _storageGate.Release(); }
+            });
+        }
+
+        private async void AllowAiCategoryMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuFlyoutItem { Tag: int id }) return;
+            await _storageGate.WaitAsync();
+            try
+            {
+                if (_isClosed) return;
+                await Task.Run(() => _repository.AllowAiCategory(id));
+                var item = Screenshots.FirstOrDefault(x => x.Id == id);
+                if (item == null || _isClosed) return;
+                item.CategoryIsManual = false;
+                if (item.FilePath == _detailsFilePath) UpdateAiDetails(item);
+            }
+            catch (Exception exception) { ShowStorageError(exception); }
+            finally { _storageGate.Release(); }
         }
 
         private void UpdateOcrDetails(ScreenshotItem screenshot)
@@ -837,6 +929,8 @@ namespace SmartScreenshotManager
                     item.OcrText = state.Text;
                     item.OcrError = state.Error;
                     item.IsProcessed = state.Status == "Processed";
+                    if ((state.Status is "Processed" or "Failed") && _automaticAiCandidates.Remove(item.Id))
+                        _aiQueue.Enqueue(item.Id, automatic: true);
                     if (string.Equals(_detailsFilePath, item.FilePath, StringComparison.OrdinalIgnoreCase))
                         UpdateOcrDetails(item);
                     if (_searchQuery.Length > 0) ApplyCurrentSort();
@@ -1067,6 +1161,7 @@ namespace SmartScreenshotManager
             if (!Directory.Exists(folderPath)) return;
             StopWatchingFolder();
             int version = ++_folderVersion;
+            _automaticAiCandidates.Clear();
             _currentFolderPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
             SelectedFolderText.Text = _currentFolderPath;
             Screenshots.Clear();
@@ -1116,6 +1211,12 @@ namespace SmartScreenshotManager
                     || !File.Exists(filePath)) return;
                 Screenshots.Add(screenshot);
                 ApplyCurrentSort();
+                if (_aiQueue.AutomaticEnabled && screenshot.WasAddedToLibrary && screenshot.AiStatus == "NotProcessed")
+                {
+                    if (screenshot.OcrStatus is "Processed" or "Failed")
+                        _aiQueue.Enqueue(screenshot.Id, automatic: true);
+                    else _automaticAiCandidates.Add(screenshot.Id);
+                }
                 if (screenshot.OcrStatus is "Pending" or "Processing") _ocrQueue.Enqueue(screenshot.Id);
             }
             catch (Exception exception)
@@ -1161,6 +1262,7 @@ namespace SmartScreenshotManager
             if (item != null)
             {
                 Screenshots.Remove(item);
+                _automaticAiCandidates.Remove(item.Id);
                 ApplyCurrentSort();
             }
         }
@@ -1594,6 +1696,9 @@ namespace SmartScreenshotManager
             _isClosed = true;
             _ocrQueue.StateChanged -= OcrQueue_StateChanged;
             _ocrQueue.Stop();
+            SettingsView.AiSettingsChanged -= SettingsView_AiSettingsChanged;
+            _aiQueue.StateChanged -= AiQueue_StateChanged;
+            _aiQueue.Stop();
             ++_folderVersion;
             StopWatchingFolder();
 

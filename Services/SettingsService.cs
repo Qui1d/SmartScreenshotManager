@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
+using SmartScreenshotManager.Models;
 using Windows.Storage;
 using Windows.System;
 
@@ -39,6 +40,30 @@ namespace SmartScreenshotManager.Services
                 _settings.Values[ScreenshotFolderKey] = value;
             }
         }
+
+        public bool AiEnabled
+        {
+            get => GetBool("AiEnabled", false);
+            set => _settings.Values["AiEnabled"] = value;
+        }
+
+        public bool AiAutomatic
+        {
+            get => GetBool("AiAutomatic", false);
+            set => _settings.Values["AiAutomatic"] = value;
+        }
+
+        public string AiModel
+        {
+            get => _settings.Values["AiModel"] as string ?? "gpt-4.1-mini-2025-04-14";
+            set => _settings.Values["AiModel"] = value;
+        }
+
+        public AiConfiguration GetAiConfiguration() => new()
+        {
+            Enabled = AiEnabled, Automatic = AiAutomatic, Model = AiModel,
+            ApiKey = AiEnabled ? new ApiKeyStore().Read() : string.Empty
+        };
 
         public bool HotkeyCtrl
         {

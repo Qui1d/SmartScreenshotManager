@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SmartScreenshotManager.Services;
+using SmartScreenshotManager.Models;
 using System;
 using System.IO;
 using Windows.Storage.Pickers;
@@ -26,6 +27,7 @@ namespace SmartScreenshotManager.Views
         public event Action<string>? ScreenshotFolderChanged;
 
         public event Action? HotkeyChanged;
+        public event Action<AiConfiguration>? AiSettingsChanged;
 
         public SettingsPage()
         {
@@ -46,6 +48,67 @@ namespace SmartScreenshotManager.Views
                     : _settingsService.ScreenshotFolder;
 
             UpdateHotkeyText();
+            AiEnabledToggle.IsOn = _settingsService.AiEnabled;
+            AiAutomaticToggle.IsOn = _settingsService.AiAutomatic;
+            AiModelBox.Text = _settingsService.AiModel;
+            try
+            {
+                AiKeyStatusText.Text = string.IsNullOrEmpty(new ApiKeyStore().Read())
+                    ? "No API key saved." : "API key saved in Windows Credential Locker.";
+            }
+            catch { AiSettingsStatusText.Text = "Could not read the saved API key. Save a new key to continue."; }
+        }
+
+        private void SaveAiSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string model = AiModelBox.Text.Trim();
+                if (string.IsNullOrWhiteSpace(model) || model.Length > 120)
+                {
+                    AiSettingsStatusText.Text = "Enter a valid model name.";
+                    return;
+                }
+                var store = new ApiKeyStore();
+                string enteredKey = AiApiKeyBox.Password.Trim();
+                if (enteredKey.Length > 0) store.Save(enteredKey);
+                AiApiKeyBox.Password = string.Empty;
+                string key = store.Read();
+                if (AiEnabledToggle.IsOn && string.IsNullOrWhiteSpace(key))
+                {
+                    AiSettingsStatusText.Text = "Save an API key before enabling AI analysis.";
+                    return;
+                }
+                _settingsService.AiModel = model;
+                _settingsService.AiEnabled = AiEnabledToggle.IsOn;
+                _settingsService.AiAutomatic = AiAutomaticToggle.IsOn;
+                AiSettingsChanged?.Invoke(new AiConfiguration
+                {
+                    Enabled = _settingsService.AiEnabled, Automatic = _settingsService.AiAutomatic,
+                    Model = model, ApiKey = key
+                });
+                AiKeyStatusText.Text = key.Length == 0 ? "No API key saved." : "API key saved in Windows Credential Locker.";
+                AiSettingsStatusText.Text = "Settings saved. The API key will be checked when you analyze a screenshot.";
+            }
+            catch { AiSettingsStatusText.Text = "Could not save AI settings or access Windows Credential Locker."; }
+        }
+
+        private void RemoveAiKeyButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Stop outgoing work before removing the stored credential.
+                _settingsService.AiEnabled = false;
+                _settingsService.AiAutomatic = false;
+                AiSettingsChanged?.Invoke(new AiConfiguration());
+                AiEnabledToggle.IsOn = false;
+                AiAutomaticToggle.IsOn = false;
+                new ApiKeyStore().Remove();
+                AiApiKeyBox.Password = string.Empty;
+                AiKeyStatusText.Text = "No API key saved.";
+                AiSettingsStatusText.Text = "API key removed. AI analysis is disabled.";
+            }
+            catch { AiSettingsStatusText.Text = "AI is disabled, but the saved key could not be removed. Try again."; }
         }
 
         // =========================

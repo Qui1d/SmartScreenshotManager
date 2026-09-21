@@ -141,6 +141,29 @@
 
             </Border>
 
+            <Border Padding="20" CornerRadius="12"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="AI analysis" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="AI sends a resized screenshot and its recognized text to OpenAI to create a description, category and tags. API usage is billed separately."
+                        TextWrapping="Wrap" Opacity="0.7" />
+                    <ToggleSwitch x:Name="AiEnabledToggle" Header="Enable AI analysis" />
+                    <ToggleSwitch x:Name="AiAutomaticToggle" Header="Automatically analyze new screenshots" />
+                    <TextBlock Text="Automatic analysis applies only to screenshots added while this option is enabled. Existing screenshots can be analyzed from Details. Changes take effect after Save."
+                        TextWrapping="Wrap" Opacity="0.7" />
+                    <PasswordBox x:Name="AiApiKeyBox" Header="OpenAI API key"
+                        PlaceholderText="Enter a key; leave blank to keep the saved key" />
+                    <TextBlock x:Name="AiKeyStatusText" Text="No API key saved." TextWrapping="Wrap" Opacity="0.7" />
+                    <TextBox x:Name="AiModelBox" Header="Model" Text="gpt-4.1-mini-2025-04-14" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="Save AI settings" Click="SaveAiSettingsButton_Click" />
+                        <Button Content="Remove API key" Click="RemoveAiKeyButton_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="AiSettingsStatusText" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
 
     </ScrollViewer>
