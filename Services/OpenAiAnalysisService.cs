@@ -20,7 +20,8 @@ namespace SmartScreenshotManager.Services
         { Timeout = TimeSpan.FromSeconds(90), MaxResponseContentBufferSize = 1024 * 1024 };
         private static readonly string[] Categories = { "Gaming", "Programming", "Documents", "Other" };
 
-        public async Task<AiAnalysis> AnalyzeAsync(AiJobState state, AiConfiguration config, CancellationToken token)
+        public async Task<AiAnalysis> AnalyzeAsync(AiJobState state, AiConfiguration config, CancellationToken token,
+            Action beforeSend, Action<long, long> recordUsage)
         {
             string image = await EncodeImageAsync(state.FilePath, token);
             string ocr = state.OcrText ?? string.Empty;
@@ -68,6 +69,8 @@ namespace SmartScreenshotManager.Services
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
             request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            token.ThrowIfCancellationRequested();
+            beforeSend();
             using var response = await Client.SendAsync(request, token);
             if (!response.IsSuccessStatusCode)
             {
@@ -84,6 +87,16 @@ namespace SmartScreenshotManager.Services
                 throw new InvalidOperationException(message);
             }
             string json = await response.Content.ReadAsStringAsync(token);
+            using (var usageDocument = JsonDocument.Parse(json))
+            {
+                if (usageDocument.RootElement.TryGetProperty("usage", out var usage)
+                    && usage.ValueKind == JsonValueKind.Object
+                    && usage.TryGetProperty("input_tokens", out var input)
+                    && usage.TryGetProperty("output_tokens", out var output)
+                    && input.TryGetInt64(out long inputCount) && inputCount >= 0
+                    && output.TryGetInt64(out long outputCount) && outputCount >= 0)
+                    recordUsage(inputCount, outputCount);
+            }
             return ParseResponse(json);
         }
 

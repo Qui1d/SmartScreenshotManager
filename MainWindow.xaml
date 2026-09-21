@@ -182,6 +182,19 @@
 
             <!-- Current screenshot folder and persistent storage errors -->
             <StackPanel Grid.Row="2" Margin="0,0,0,18" Spacing="8">
+                <CheckBox x:Name="SemanticModeCheckBox" Content="Search by meaning"
+                    Checked="SemanticMode_Changed" Unchecked="SemanticMode_Changed" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="SemanticSearchButton" Content="Search by meaning" IsEnabled="False"
+                        Click="SemanticSearchButton_Click" />
+                    <Button x:Name="IndexSemanticButton" Content="Update folder index (API)"
+                        Click="IndexSemanticButton_Click" />
+                    <Button x:Name="CancelSemanticButton" Content="Cancel" IsEnabled="False"
+                        Click="CancelSemanticButton_Click" />
+                </StackPanel>
+                <TextBlock Text="Indexing sends OCR, descriptions and tags to OpenAI. Search sends your phrase. Both use your API balance and daily request limit. Unchanged indexed items are skipped."
+                    TextWrapping="Wrap" Opacity="0.6" />
+                <TextBlock x:Name="SemanticStatusText" TextWrapping="Wrap" />
                 <TextBlock
                     x:Name="SelectedFolderText"
                     Text="No screenshot folder selected"

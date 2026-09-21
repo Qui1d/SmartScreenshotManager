@@ -92,7 +92,10 @@ namespace SmartScreenshotManager.Services
                         if (state == null || (job.Automatic && state.Status == "Processed")) continue;
                         if (!_repository.SaveAiStatus(state.Id, state.FilePath, "Processing", null)) continue;
                         Publish(state.Id);
-                        var result = await _api.AnalyzeAsync(state, config, token);
+                        long requestId = 0;
+                        var result = await _api.AnalyzeAsync(state, config, token,
+                            () => requestId = _repository.ReserveAiRequest(config.DailyLimit, config.Model),
+                            (input, output) => _repository.RecordAiUsage(requestId, input, output));
                         token.ThrowIfCancellationRequested();
                         if (!_repository.SaveAiResult(state.Id, state.FilePath, result))
                         {

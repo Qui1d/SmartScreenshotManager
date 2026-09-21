@@ -53,6 +53,12 @@ namespace SmartScreenshotManager.Services
             set => _settings.Values["AiAutomatic"] = value;
         }
 
+        public int AiDailyLimit
+        {
+            get => _settings.Values["AiDailyLimit"] is int value ? System.Math.Clamp(value, 0, 10000) : 100;
+            set => _settings.Values["AiDailyLimit"] = System.Math.Clamp(value, 0, 10000);
+        }
+
         public string AiModel
         {
             get => _settings.Values["AiModel"] as string ?? "gpt-4.1-mini-2025-04-14";
@@ -61,7 +67,7 @@ namespace SmartScreenshotManager.Services
 
         public AiConfiguration GetAiConfiguration() => new()
         {
-            Enabled = AiEnabled, Automatic = AiAutomatic, Model = AiModel,
+            Enabled = AiEnabled, Automatic = AiAutomatic, Model = AiModel, DailyLimit = AiDailyLimit,
             ApiKey = AiEnabled ? new ApiKeyStore().Read() : string.Empty
         };
 

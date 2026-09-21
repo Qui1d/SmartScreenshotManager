@@ -51,6 +51,7 @@ namespace SmartScreenshotManager.Views
             AiEnabledToggle.IsOn = _settingsService.AiEnabled;
             AiAutomaticToggle.IsOn = _settingsService.AiAutomatic;
             AiModelBox.Text = _settingsService.AiModel;
+            AiDailyLimitBox.Value = _settingsService.AiDailyLimit;
             try
             {
                 AiKeyStatusText.Text = string.IsNullOrEmpty(new ApiKeyStore().Read())
@@ -59,10 +60,26 @@ namespace SmartScreenshotManager.Views
             catch { AiSettingsStatusText.Text = "Could not read the saved API key. Save a new key to continue."; }
         }
 
+        public SmartScreenshotManager.Data.ScreenshotRepository? UsageRepository { get; set; }
+        public async void RefreshAiUsage()
+        {
+            var repository = UsageRepository;
+            if (repository == null) return;
+            try { AiUsageText.Text = await System.Threading.Tasks.Task.Run(repository.GetAiUsageSummary); }
+            catch { AiUsageText.Text = "Could not read usage statistics."; }
+        }
+        private void RefreshAiUsageButton_Click(object sender, RoutedEventArgs e) => RefreshAiUsage();
+
         private void SaveAiSettingsButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
+                double limit = AiDailyLimitBox.Value;
+                if (double.IsNaN(limit) || double.IsInfinity(limit) || limit < 0 || limit > 10000 || limit != Math.Truncate(limit))
+                {
+                    AiSettingsStatusText.Text = "Enter a whole daily limit from 0 to 10000.";
+                    return;
+                }
                 string model = AiModelBox.Text.Trim();
                 if (string.IsNullOrWhiteSpace(model) || model.Length > 120)
                 {
@@ -79,13 +96,14 @@ namespace SmartScreenshotManager.Views
                     AiSettingsStatusText.Text = "Save an API key before enabling AI analysis.";
                     return;
                 }
+                _settingsService.AiDailyLimit = (int)limit;
                 _settingsService.AiModel = model;
                 _settingsService.AiEnabled = AiEnabledToggle.IsOn;
                 _settingsService.AiAutomatic = AiAutomaticToggle.IsOn;
                 AiSettingsChanged?.Invoke(new AiConfiguration
                 {
                     Enabled = _settingsService.AiEnabled, Automatic = _settingsService.AiAutomatic,
-                    Model = model, ApiKey = key
+                    Model = model, ApiKey = key, DailyLimit = _settingsService.AiDailyLimit
                 });
                 AiKeyStatusText.Text = key.Length == 0 ? "No API key saved." : "API key saved in Windows Credential Locker.";
                 AiSettingsStatusText.Text = "Settings saved. The API key will be checked when you analyze a screenshot.";

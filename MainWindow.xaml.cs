@@ -1,3 +1,4 @@
+using System.Net.Http;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -74,10 +75,13 @@ namespace SmartScreenshotManager
                 ApplicationData.Current.LocalFolder.Path, "screenshots.db"));
             var processingLog = new ProcessingLog(Path.Combine(
                 ApplicationData.Current.LocalFolder.Path, "processing.log"));
+            InitializeSemanticSearch(processingLog);
             _ocrQueue = new OcrQueueService(_repository, processingLog);
             _ocrQueue.StateChanged += OcrQueue_StateChanged;
             _aiQueue = new AiQueueService(_repository, processingLog);
             _aiQueue.StateChanged += AiQueue_StateChanged;
+            SettingsView.UsageRepository = _repository;
+            SettingsView.Loaded += (_, _) => SettingsView.RefreshAiUsage();
             SettingsView.AiSettingsChanged += SettingsView_AiSettingsChanged;
             try { _aiQueue.Configure(_settingsService.GetAiConfiguration()); }
             catch { ShowStorageError(new InvalidOperationException("Could not load the saved AI key. Check Settings.")); }
@@ -441,7 +445,12 @@ namespace SmartScreenshotManager
             var filtered = Screenshots.Where(x => (!_showFavoritesOnly || x.IsFavorite)
                 && (_selectedCategory == null || x.Category == _selectedCategory)
                 && MatchesSearch(x));
-            var desired = (_sortNewestFirst
+            var desired = SemanticMode && _searchQuery.Length > 0
+                ? filtered.OrderByDescending(MatchesText)
+                    .ThenBy(x => MatchesSemantic(x) && _semanticScores.TryGetValue(x.Id, out var distance)
+                        ? distance : double.MaxValue)
+                    .ThenBy(x => x.Id).ToList()
+                : (_sortNewestFirst
                 ? filtered.OrderByDescending(x => x.AddedAt).ThenBy(x => x.Id)
                 : filtered.OrderBy(x => x.AddedAt).ThenBy(x => x.Id)).ToList();
 
@@ -472,6 +481,10 @@ namespace SmartScreenshotManager
         }
 
         private bool MatchesSearch(ScreenshotItem item) =>
+            MatchesText(item) || (SemanticMode && MatchesSemantic(item));
+
+        // Text matches stay available immediately, even without a current vector or API access.
+        private bool MatchesText(ScreenshotItem item) =>
             _searchQuery.Length == 0
             || item.FileName.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)
             || (item.Category?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false)
@@ -485,11 +498,18 @@ namespace SmartScreenshotManager
             _searchQuery = textBox.Text.Trim();
             // XAML can raise TextChanged before the rest of the named controls exist.
             if (!_isGalleryInitialized) return;
+            InvalidateSemanticResults();
             ApplyCurrentSort();
         }
 
         private void SearchTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
         {
+            if (e.Key == Windows.System.VirtualKey.Enter && SemanticMode)
+            {
+                e.Handled = true;
+                RunSemanticSearch();
+                return;
+            }
             if (e.Key != Windows.System.VirtualKey.Escape) return;
             SearchTextBox.Text = string.Empty;
             e.Handled = true;
@@ -497,6 +517,7 @@ namespace SmartScreenshotManager
 
         private void UpdateGallerySection()
         {
+            InvalidateSemanticResults();
             GalleryTitle.Text = _showFavoritesOnly ? "Favorites" : _selectedCategory ?? "All Screenshots";
             var accentStyle = (Style)Application.Current.Resources["AccentButtonStyle"];
             AllScreenshotsButton.Style = !_showFavoritesOnly && _selectedCategory == null ? accentStyle : null;
@@ -823,7 +844,11 @@ namespace SmartScreenshotManager
         private void SettingsView_AiSettingsChanged(AiConfiguration configuration)
         {
             _automaticAiCandidates.Clear();
+            InvalidateSemanticResults(cancelIndex: true);
+            _cachedSemanticQuery = null;
+            _cachedSemanticVector = null;
             _aiQueue.Configure(configuration);
+            ApplyCurrentSort();
             var item = Screenshots.FirstOrDefault(x => x.FilePath == _detailsFilePath);
             if (item != null) UpdateAiDetails(item);
         }
@@ -863,6 +888,7 @@ namespace SmartScreenshotManager
                 {
                     if (_isClosed) return;
                     // Reload current database values, including any manual edit made in flight.
+                    SettingsView.RefreshAiUsage();
                     var state = await Task.Run(() => _repository.GetAiState(id));
                     if (state == null || _isClosed) return;
                     var item = Screenshots.FirstOrDefault(x => x.Id == id);
@@ -1160,6 +1186,7 @@ namespace SmartScreenshotManager
         {
             if (!Directory.Exists(folderPath)) return;
             StopWatchingFolder();
+            InvalidateSemanticResults(cancelIndex: true);
             int version = ++_folderVersion;
             _automaticAiCandidates.Clear();
             _currentFolderPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
@@ -1694,6 +1721,7 @@ namespace SmartScreenshotManager
             WindowEventArgs args)
         {
             _isClosed = true;
+            _semanticCancellation?.Cancel();
             _ocrQueue.StateChanged -= OcrQueue_StateChanged;
             _ocrQueue.Stop();
             SettingsView.AiSettingsChanged -= SettingsView_AiSettingsChanged;
@@ -1736,5 +1764,217 @@ namespace SmartScreenshotManager
         private static extern bool ShowWindow(
             IntPtr hWnd,
             int command);
+
+        private SemanticVectorStore? _vectors;
+        private ProcessingLog? _semanticLog;
+        private EmbeddingService? _embeddings;
+        private CancellationTokenSource? _semanticCancellation;
+        private bool _semanticBusy;
+        private bool _indexing;
+        private int _semanticGeneration;
+        private Dictionary<int, double> _semanticScores = new();
+        private Dictionary<int, string> _semanticHashes = new();
+        private string? _cachedSemanticQuery;
+        private float[]? _cachedSemanticVector;
+        private bool SemanticMode => SemanticModeCheckBox?.IsChecked == true;
+
+        private void InitializeSemanticSearch(ProcessingLog log)
+        {
+            _semanticLog = log;
+            _vectors = new SemanticVectorStore(Path.Combine(ApplicationData.Current.LocalFolder.Path,
+                "semantic-small-512-v1.db"));
+            _embeddings = new EmbeddingService(_repository);
+        }
+
+        private static SemanticDocument? ToSemanticDocument(ScreenshotItem item) =>
+            SemanticDocument.Create(item.Id, item.FilePath, item.FileName, item.Category,
+                item.Description, item.Tags, item.OcrText);
+
+        private List<SemanticDocument> SemanticDocuments(bool activeSection) => Screenshots
+            .Where(x => !activeSection || ((!_showFavoritesOnly || x.IsFavorite)
+                && (_selectedCategory == null || x.Category == _selectedCategory)))
+            .Select(ToSemanticDocument).OfType<SemanticDocument>().ToList();
+
+        private bool MatchesSemantic(ScreenshotItem item)
+        {
+            if (_searchQuery.Length == 0) return true;
+            return _semanticScores.ContainsKey(item.Id)
+                && _semanticHashes.TryGetValue(item.Id, out var hash)
+                && ToSemanticDocument(item)?.Fingerprint == hash;
+        }
+
+        private void InvalidateSemanticResults(bool cancelIndex = false)
+        {
+            _semanticGeneration++;
+            _semanticScores.Clear();
+            _semanticHashes.Clear();
+            if (!_indexing || cancelIndex) _semanticCancellation?.Cancel();
+            if (SemanticMode && !_semanticBusy)
+                SemanticStatusText.Text = "Text matches appear immediately. Press Enter to add semantic matches. Update the index after changing screenshot text.";
+        }
+
+        private void SemanticMode_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_isGalleryInitialized) return;
+            InvalidateSemanticResults();
+            SortButton.IsEnabled = !SemanticMode;
+            SemanticSearchButton.IsEnabled = SemanticMode && !_semanticBusy;
+            ApplyCurrentSort();
+        }
+
+        private void CancelSemanticButton_Click(object sender, RoutedEventArgs e) => _semanticCancellation?.Cancel();
+        private void SemanticSearchButton_Click(object sender, RoutedEventArgs e) => RunSemanticSearch();
+        private void IndexSemanticButton_Click(object sender, RoutedEventArgs e) => RunSemanticIndex();
+
+        private CancellationToken BeginSemanticWork(bool indexing)
+        {
+            _semanticCancellation?.Dispose();
+            _semanticCancellation = new CancellationTokenSource();
+            _semanticBusy = true;
+            _indexing = indexing;
+            IndexSemanticButton.IsEnabled = false;
+            SemanticSearchButton.IsEnabled = false;
+            CancelSemanticButton.IsEnabled = true;
+            return _semanticCancellation.Token;
+        }
+
+        private void EndSemanticWork()
+        {
+            _semanticBusy = false;
+            _indexing = false;
+            if (_isClosed) return;
+            IndexSemanticButton.IsEnabled = true;
+            SemanticSearchButton.IsEnabled = SemanticMode;
+            CancelSemanticButton.IsEnabled = false;
+            SettingsView.RefreshAiUsage();
+        }
+
+        private async void RunSemanticIndex()
+        {
+            if (_semanticBusy || _vectors == null || _embeddings == null) return;
+            var documents = SemanticDocuments(false);
+            if (documents.Count == 0)
+            {
+                SemanticStatusText.Text = "No text to index. Run OCR or AI analysis on screenshots first.";
+                return;
+            }
+            var token = BeginSemanticWork(true);
+            int saved = 0, skipped = 0;
+            try
+            {
+                var config = _settingsService.GetAiConfiguration();
+                if (!config.CanAnalyze) throw new InvalidOperationException("Enable AI and save an API key in Settings first.");
+                SemanticStatusText.Text = $"Checking {documents.Count} screenshots…";
+                await Task.Run(async () =>
+                {
+                    // Checks the extension before any paid work.
+                    var current = _vectors.GetCurrentIds(documents);
+                    foreach (var original in documents)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var document = _repository.GetSemanticDocument(original.Id);
+                        if (document == null || !File.Exists(document.FilePath)) { skipped++; continue; }
+                        if (current.Contains(document.Id) && original.Fingerprint == document.Fingerprint)
+                        { skipped++; continue; }
+                        var vector = await _embeddings.EmbedAsync(document.Text, config, token);
+                        token.ThrowIfCancellationRequested();
+                        var latest = _repository.GetSemanticDocument(document.Id);
+                        if (latest?.Fingerprint == document.Fingerprint && File.Exists(latest.FilePath))
+                        {
+                            _vectors.Save(document, vector);
+                            saved++;
+                        }
+                        else skipped++;
+                        int done = saved + skipped;
+                        _dispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (!_isClosed && _semanticBusy && _indexing && !token.IsCancellationRequested)
+                                SemanticStatusText.Text = $"Indexing: {done}/{documents.Count}. You can cancel; completed items stay saved.";
+                        });
+                    }
+                }, token);
+                _semanticLog?.Write($"Semantic index: {saved} saved, {skipped} skipped");
+                if (!_isClosed) SemanticStatusText.Text = $"Index ready: {saved} updated, {skipped} unchanged or skipped. Enable Search by meaning and enter a phrase.";
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                _semanticLog?.Write($"Semantic index cancelled: {saved} saved");
+                if (!_isClosed) SemanticStatusText.Text = $"Indexing stopped; {saved} items saved. Run Update index to continue.";
+            }
+            catch (OperationCanceledException)
+            {
+                if (!_isClosed) SemanticStatusText.Text = $"Request timed out; {saved} items saved. Run Update index to continue.";
+            }
+            catch (Exception exception)
+            {
+                _semanticLog?.Write($"Semantic index failed: {exception.GetType().Name}");
+                if (!_isClosed) SemanticStatusText.Text = $"{saved} items saved. " + SemanticError(exception);
+            }
+            finally { EndSemanticWork(); }
+        }
+
+        private async void RunSemanticSearch()
+        {
+            if (_semanticBusy || !SemanticMode || _vectors == null || _embeddings == null) return;
+            string query = _searchQuery;
+            if (string.IsNullOrWhiteSpace(query)) return;
+            if (System.Text.Encoding.UTF8.GetByteCount(query) > 6000)
+            { SemanticStatusText.Text = "Please use a shorter search phrase."; return; }
+            var documents = SemanticDocuments(true);
+            int generation = ++_semanticGeneration;
+            var token = BeginSemanticWork(false);
+            _semanticScores.Clear();
+            _semanticHashes.Clear();
+            ApplyCurrentSort();
+            try
+            {
+                SemanticStatusText.Text = "Text matches are shown. Searching for additional semantic matches…";
+                var config = _settingsService.GetAiConfiguration();
+                if (!config.CanAnalyze) throw new InvalidOperationException("Enable AI and save an API key in Settings first.");
+                var currentIds = await Task.Run(() => _vectors.GetCurrentIds(documents), token);
+                var eligible = documents.Where(x => currentIds.Contains(x.Id)).ToList();
+                if (eligible.Count == 0)
+                    throw new InvalidOperationException("Showing text matches only: this section has no current indexed screenshots. Run Update folder index to enable semantic matches.");
+                float[] vector;
+                if (_cachedSemanticQuery == query && _cachedSemanticVector != null) vector = _cachedSemanticVector;
+                else
+                {
+                    vector = await Task.Run(() => _embeddings.EmbedAsync(query, config, token), token);
+                    token.ThrowIfCancellationRequested();
+                    _cachedSemanticQuery = query;
+                    _cachedSemanticVector = vector;
+                }
+                var scores = await Task.Run(() => _vectors.Search(vector, eligible), token);
+                token.ThrowIfCancellationRequested();
+                if (_isClosed || generation != _semanticGeneration) return;
+                _semanticLog?.Write($"Semantic search: {scores.Count} results from {eligible.Count} indexed items");
+                _semanticScores = scores;
+                _semanticHashes = eligible.ToDictionary(x => x.Id, x => x.Fingerprint);
+                ApplyCurrentSort();
+                SemanticStatusText.Text = $"{VisibleScreenshots.Count} results: text matches first, followed by semantic matches. {documents.Count - eligible.Count} screenshots need indexing. Semantic results may include weak matches.";
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                if (!_isClosed) SemanticStatusText.Text = "Search cancelled. Press Enter to search again.";
+            }
+            catch (OperationCanceledException)
+            {
+                if (!_isClosed) SemanticStatusText.Text = "Search request timed out. Try again later.";
+            }
+            catch (Exception exception)
+            {
+                _semanticLog?.Write($"Semantic search failed: {exception.GetType().Name}");
+                if (!_isClosed && generation == _semanticGeneration) SemanticStatusText.Text = SemanticError(exception);
+            }
+            finally { EndSemanticWork(); }
+        }
+
+        private static string SemanticError(Exception exception) => exception switch
+        {
+            InvalidOperationException => exception.Message,
+            HttpRequestException => "Cannot reach OpenAI. Check your internet connection.",
+            _ => "Semantic search failed. Restore packages and rebuild for x64, then try again."
+        };
+
     }
 }

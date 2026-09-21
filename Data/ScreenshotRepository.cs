@@ -58,7 +58,7 @@ namespace SmartScreenshotManager.Data
                 command.Transaction = migration;
                 command.CommandText = "PRAGMA user_version";
                 long version = Convert.ToInt64(command.ExecuteScalar());
-                if (version > 3) throw new InvalidOperationException("This database requires a newer app version.");
+                if (version > 4) throw new InvalidOperationException("This database requires a newer app version.");
                 if (version < 2)
                 {
                     command.CommandText = """
@@ -81,6 +81,18 @@ namespace SmartScreenshotManager.Data
                         """;
                     command.ExecuteNonQuery();
                 }
+                command.CommandText = """
+                    CREATE TABLE IF NOT EXISTS AiRequests (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Day TEXT NOT NULL,
+                        Model TEXT NOT NULL,
+                        InputTokens INTEGER NULL,
+                        OutputTokens INTEGER NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS IX_AiRequests_Day ON AiRequests(Day);
+                    PRAGMA user_version = 4;
+                    """;
+                command.ExecuteNonQuery();
                 // Interrupted paid requests are not resent automatically on restart.
                 command.CommandText = """
                     UPDATE Screenshots SET AiStatus = 'Cancelled',
@@ -96,6 +108,64 @@ namespace SmartScreenshotManager.Data
             {
                 connection.Dispose();
                 throw;
+            }
+        }
+
+        // Reserve atomically before sending. Failed/unknown requests also consume the local limit.
+        public long ReserveAiRequest(int limit, string model)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var transaction = connection.BeginTransaction();
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO AiRequests(Day, Model)
+                    SELECT $day, $model
+                    WHERE (SELECT COUNT(*) FROM AiRequests WHERE Day = $day) < $limit;
+                    """;
+                command.Parameters.AddWithValue("$day", DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("$model", model);
+                command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 0, 10000));
+                if (command.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("Daily AI request limit reached. Change the limit in Settings or wait until 00:00 UTC.");
+                command.CommandText = "SELECT last_insert_rowid()";
+                long id = Convert.ToInt64(command.ExecuteScalar());
+                transaction.Commit();
+                return id;
+            }
+        }
+
+        public void RecordAiUsage(long requestId, long input, long output)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE AiRequests SET InputTokens=$input, OutputTokens=$output WHERE Id=$id";
+                command.Parameters.AddWithValue("$id", requestId);
+                command.Parameters.AddWithValue("$input", input);
+                command.Parameters.AddWithValue("$output", output);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        public string GetAiUsageSummary()
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT COUNT(*), COALESCE(SUM(InputTokens),0), COALESCE(SUM(OutputTokens),0),
+                        COALESCE(SUM(CASE WHEN InputTokens IS NULL THEN 1 ELSE 0 END),0)
+                    FROM AiRequests WHERE Day=$day;
+                    """;
+                command.Parameters.AddWithValue("$day", DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                using var reader = command.ExecuteReader();
+                reader.Read();
+                return $"Today (UTC): {reader.GetInt64(0)} requests\nInput: {reader.GetInt64(1):N0} tokens · Output: {reader.GetInt64(2):N0} tokens\nRequests without usage data: {reader.GetInt64(3)}";
             }
         }
 
@@ -272,6 +342,22 @@ namespace SmartScreenshotManager.Data
                 command.Parameters.AddWithValue("$id", id);
                 if (command.ExecuteNonQuery() != 1)
                     throw new InvalidOperationException("Screenshot no longer exists in the library.");
+            }
+        }
+
+        public SemanticDocument? GetSemanticDocument(int id)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT Id,FilePath,FileName,Category,Description,Tags,OcrText FROM Screenshots WHERE Id=$id";
+                command.Parameters.AddWithValue("$id", id);
+                using var reader = command.ExecuteReader();
+                if (!reader.Read()) return null;
+                string? Value(int index) => reader.IsDBNull(index) ? null : reader.GetString(index);
+                return SemanticDocument.Create(reader.GetInt32(0), reader.GetString(1), reader.GetString(2),
+                    Value(3), Value(4), Value(5), Value(6));
             }
         }
 
