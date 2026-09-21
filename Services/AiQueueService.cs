@@ -3,6 +3,7 @@ using SmartScreenshotManager.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Channels;
@@ -24,6 +25,9 @@ namespace SmartScreenshotManager.Services
         private AiConfiguration _config = new();
         private int _version;
         private readonly Task _worker;
+        private int _activeId;
+        public int ActiveId => Volatile.Read(ref _activeId);
+        public int[] PendingIds => _pending.Keys.ToArray();
         public event Action<int>? StateChanged;
         public bool CanAnalyze { get { lock (_gate) return _config.CanAnalyze; } }
         public bool AutomaticEnabled { get { lock (_gate) return _config.CanAnalyze && _config.Automatic; } }
@@ -74,6 +78,7 @@ namespace SmartScreenshotManager.Services
                 {
                     AiJobState? state = null;
                     var timer = Stopwatch.StartNew();
+                    bool attempted = false;
                     try
                     {
                         AiConfiguration config;
@@ -91,6 +96,8 @@ namespace SmartScreenshotManager.Services
                         state = _repository.GetAiState(job.Id);
                         if (state == null || (job.Automatic && state.Status == "Processed")) continue;
                         if (!_repository.SaveAiStatus(state.Id, state.FilePath, "Processing", null)) continue;
+                        attempted = true;
+                        Volatile.Write(ref _activeId, job.Id);
                         Publish(state.Id);
                         long requestId = 0;
                         var result = await _api.AnalyzeAsync(state, config, token,
@@ -123,6 +130,12 @@ namespace SmartScreenshotManager.Services
                     }
                     finally
                     {
+                        if (attempted)
+                        {
+                            try { _repository.SaveAttemptTiming(job.Id, true, timer.ElapsedMilliseconds); }
+                            catch { _log.Write("Could not save task duration."); }
+                        }
+                        Volatile.Write(ref _activeId, 0);
                         _pending.TryRemove(job.Id, out _);
                         Publish(job.Id);
                     }

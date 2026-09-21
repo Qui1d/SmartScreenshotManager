@@ -3,6 +3,7 @@ using SmartScreenshotManager.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -21,6 +22,9 @@ namespace SmartScreenshotManager.Services
         private readonly ConcurrentDictionary<int, byte> _pending = new();
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _worker;
+        private int _activeId;
+        public int ActiveId => Volatile.Read(ref _activeId);
+        public int[] PendingIds => _pending.Keys.ToArray();
         public event Action<OcrJobState>? StateChanged;
 
         public OcrQueueService(ScreenshotRepository repository, ProcessingLog log)
@@ -53,6 +57,7 @@ namespace SmartScreenshotManager.Services
                     OcrJobState? state = null;
                     bool retryRenamed = false;
                     var timer = Stopwatch.StartNew();
+                    bool attempted = false;
                     try
                     {
                         state = _repository.GetOcrState(job.Id);
@@ -67,6 +72,8 @@ namespace SmartScreenshotManager.Services
                             retryRenamed = true;
                             continue;
                         }
+                        attempted = true;
+                        Volatile.Write(ref _activeId, job.Id);
                         Publish(state with { Status = "Processing", Error = null });
                         string text = await _ocr.RecognizeAsync(state.FilePath, _stop.Token);
                         if (_repository.SaveOcrState(state.Id, state.FilePath, "Processed", text, null))
@@ -106,6 +113,12 @@ namespace SmartScreenshotManager.Services
                     }
                     finally
                     {
+                        if (attempted)
+                        {
+                            try { _repository.SaveAttemptTiming(job.Id, false, timer.ElapsedMilliseconds); }
+                            catch { _log.Write("Could not save task duration."); }
+                        }
+                        Volatile.Write(ref _activeId, 0);
                         _pending.TryRemove(job.Id, out _);
                         // A rename invalidates an in-flight result. Resolve the latest path on retry.
                         if (retryRenamed) Enqueue(job.Id, job.Force);

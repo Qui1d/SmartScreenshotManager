@@ -76,6 +76,7 @@ namespace SmartScreenshotManager
             var processingLog = new ProcessingLog(Path.Combine(
                 ApplicationData.Current.LocalFolder.Path, "processing.log"));
             InitializeSemanticSearch(processingLog);
+            InitializeActivity(processingLog);
             _ocrQueue = new OcrQueueService(_repository, processingLog);
             _ocrQueue.StateChanged += OcrQueue_StateChanged;
             _aiQueue = new AiQueueService(_repository, processingLog);
@@ -1499,6 +1500,7 @@ namespace SmartScreenshotManager
             object sender,
             RoutedEventArgs e)
         {
+            HideActivity();
             CloseDetailsPanel();
 
             GalleryPage.Visibility =
@@ -1510,6 +1512,7 @@ namespace SmartScreenshotManager
 
         private void ShowGalleryPage()
         {
+            HideActivity();
             SettingsPageContainer.Visibility =
                 Visibility.Collapsed;
 
@@ -1721,6 +1724,7 @@ namespace SmartScreenshotManager
             WindowEventArgs args)
         {
             _isClosed = true;
+            _activityTimer?.Stop();
             _semanticCancellation?.Cancel();
             _ocrQueue.StateChanged -= OcrQueue_StateChanged;
             _ocrQueue.Stop();
@@ -1975,6 +1979,161 @@ namespace SmartScreenshotManager
             HttpRequestException => "Cannot reach OpenAI. Check your internet connection.",
             _ => "Semantic search failed. Restore packages and rebuild for x64, then try again."
         };
+
+        private DispatcherTimer? _activityTimer;
+        private ProcessingLog? _activityLog;
+        private bool _activityRefreshing;
+        private readonly ObservableCollection<ActivityItem> _activityItems = new();
+
+        private void InitializeActivity(ProcessingLog log)
+        {
+            _activityLog = log;
+            ActivityList.ItemsSource = _activityItems;
+            _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _activityTimer.Tick += (_, _) => RefreshActivity();
+        }
+
+        private void HideActivity()
+        {
+            _activityTimer?.Stop();
+            ActivityPage.Visibility = Visibility.Collapsed;
+            ActivityButton.Style = null;
+        }
+
+        private void ActivityButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseDetailsPanel();
+            GalleryPage.Visibility = Visibility.Collapsed;
+            SettingsPageContainer.Visibility = Visibility.Collapsed;
+            ActivityPage.Visibility = Visibility.Visible;
+            ActivityButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+            foreach (var button in new[] { AllScreenshotsButton, FavoritesButton, GamingButton,
+                ProgrammingButton, DocumentsButton, OtherButton }) button.Style = null;
+            ActivityMessageText.Text = string.Empty;
+            _activityTimer?.Start();
+            RefreshActivity();
+        }
+
+        private void ActivityRefresh_Click(object sender, RoutedEventArgs e) => RefreshActivity();
+        private void ActivityFilter_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_activityTimer != null) RefreshActivity();
+        }
+
+        private async void RefreshActivity()
+        {
+            if (_isClosed || _activityRefreshing || ActivityPage.Visibility != Visibility.Visible) return;
+            _activityRefreshing = true;
+            string folder = _currentFolderPath ?? string.Empty;
+            bool failures = ActivityFailuresOnly.IsChecked == true;
+            try
+            {
+                var result = await Task.Run(() =>
+                {
+                    var activity = _repository.GetActivity(folder, failures);
+                    string usage = _repository.GetAiUsageSummary();
+                    string log;
+                    try { log = _activityLog?.ReadRecent() ?? "No log entries yet."; }
+                    catch { log = "Could not read the processing log."; }
+                    return (activity, usage, log);
+                });
+                if (_isClosed || ActivityPage.Visibility != Visibility.Visible
+                    || folder != (_currentFolderPath ?? string.Empty)
+                    || failures != (ActivityFailuresOnly.IsChecked == true)) return;
+                var ocrIds = _ocrQueue.PendingIds.ToHashSet();
+                var aiIds = _aiQueue.PendingIds.ToHashSet();
+                int ocrActive = _ocrQueue.ActiveId;
+                int aiActive = _aiQueue.ActiveId;
+                int ocrRunning = ocrIds.Contains(ocrActive) ? 1 : 0;
+                int aiRunning = aiIds.Contains(aiActive) ? 1 : 0;
+                ActivityFolderText.Text = folder.Length == 0 ? "Select a screenshot folder in Settings." : folder;
+                ActivityQueueText.Text = $"Live queues (whole app): OCR {ocrIds.Count - ocrRunning} waiting / {ocrRunning} running · AI {aiIds.Count - aiRunning} waiting / {aiRunning} running"
+                    + (_semanticBusy ? (_indexing ? " · Semantic indexing is running" : " · Semantic search is running") : "");
+                ActivityProgress.Visibility = ocrIds.Count + aiIds.Count > 0 || _semanticBusy
+                    ? Visibility.Visible : Visibility.Collapsed;
+                ActivitySummaryText.Text = result.activity.Summary;
+                ActivitySemanticText.Text = "Semantic search / index: " + (string.IsNullOrWhiteSpace(SemanticStatusText.Text)
+                    ? "No activity in this session." : SemanticStatusText.Text);
+                ActivityUsageText.Text = "API usage across the app — daily limit: " + _settingsService.AiDailyLimit
+                    + "\n" + result.usage;
+                ActivityLogText.Text = result.log;
+                var rows = result.activity.Items.Select(item => item with
+                {
+                    OcrStatus = ocrIds.Contains(item.Id) ? (item.Id == ocrActive ? "Processing" : "Queued") : item.OcrStatus,
+                    AiStatus = aiIds.Contains(item.Id) ? (item.Id == aiActive ? "Processing" : "Queued") : item.AiStatus,
+                    OcrError = ocrIds.Contains(item.Id) ? null : item.OcrError,
+                    AiError = aiIds.Contains(item.Id) ? null : item.AiError,
+                    CanRetryOcr = item.OcrStatus == "Failed" && !ocrIds.Contains(item.Id),
+                    CanRetryAi = (item.AiStatus is "Failed" or "Cancelled") && !aiIds.Contains(item.Id) && _aiQueue.CanAnalyze
+                }).ToList();
+                // Update changed rows without recreating the entire list on every timer tick.
+                var ids = rows.Select(x => x.Id).ToHashSet();
+                for (int i = _activityItems.Count - 1; i >= 0; i--)
+                    if (!ids.Contains(_activityItems[i].Id)) _activityItems.RemoveAt(i);
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    int existing = -1;
+                    for (int j = i; j < _activityItems.Count; j++)
+                        if (_activityItems[j].Id == rows[i].Id) { existing = j; break; }
+                    if (existing < 0) _activityItems.Insert(i, rows[i]);
+                    else
+                    {
+                        if (existing != i) _activityItems.Move(existing, i);
+                        if (_activityItems[i] != rows[i]) _activityItems[i] = rows[i];
+                    }
+                }
+                ActivityCountText.Text = rows.Count == 0
+                    ? (failures ? "No failed or cancelled tasks in this folder." : "No screenshots in this folder.")
+                    : $"Showing {rows.Count} screenshots (up to 200; active and failed first). Folder total: {result.activity.Total}. Auto-refresh: 2 s.";
+            }
+            catch (Exception exception)
+            {
+                _activityLog?.Write($"Activity refresh failed: {exception.GetType().Name}");
+                if (!_isClosed) ActivityMessageText.Text = "Could not refresh processing activity. Try Refresh again.";
+            }
+            finally { _activityRefreshing = false; }
+        }
+
+        private void ActivityRetryOcr_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: int id }) RetryActivity(id, false);
+        }
+        private void ActivityRetryAi_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: int id }) RetryActivity(id, true);
+        }
+        private async void RetryActivity(int id, bool ai)
+        {
+            try
+            {
+                bool allowed = await Task.Run(() =>
+                {
+                    if (ai)
+                    {
+                        var state = _repository.GetAiState(id);
+                        return state != null && (state.Status is "Failed" or "Cancelled") && File.Exists(state.FilePath);
+                    }
+                    var ocr = _repository.GetOcrState(id);
+                    return ocr?.Status == "Failed" && File.Exists(ocr.FilePath);
+                });
+                if (_isClosed) return;
+                if (!allowed)
+                {
+                    ActivityMessageText.Text = "Task state changed or the file is no longer available. Refresh the list.";
+                    RefreshActivity();
+                    return;
+                }
+                bool queued = ai ? _aiQueue.Enqueue(id) : _ocrQueue.Enqueue(id, force: true);
+                ActivityMessageText.Text = queued ? "Retry queued."
+                    : ai && !_aiQueue.CanAnalyze ? "Enable AI and save an API key in Settings first." : "This task is already queued.";
+                RefreshActivity();
+            }
+            catch (Exception exception)
+            {
+                _activityLog?.Write($"Activity retry failed: {exception.GetType().Name}");
+                if (!_isClosed) ActivityMessageText.Text = "Could not queue the retry.";
+            }
+        }
 
     }
 }

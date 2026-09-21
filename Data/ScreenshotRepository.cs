@@ -58,7 +58,7 @@ namespace SmartScreenshotManager.Data
                 command.Transaction = migration;
                 command.CommandText = "PRAGMA user_version";
                 long version = Convert.ToInt64(command.ExecuteScalar());
-                if (version > 4) throw new InvalidOperationException("This database requires a newer app version.");
+                if (version > 5) throw new InvalidOperationException("This database requires a newer app version.");
                 if (version < 2)
                 {
                     command.CommandText = """
@@ -90,9 +90,20 @@ namespace SmartScreenshotManager.Data
                         OutputTokens INTEGER NULL
                     );
                     CREATE INDEX IF NOT EXISTS IX_AiRequests_Day ON AiRequests(Day);
-                    PRAGMA user_version = 4;
+
                     """;
                 command.ExecuteNonQuery();
+                if (version < 5)
+                {
+                    command.CommandText = """
+                        ALTER TABLE Screenshots ADD COLUMN OcrDurationMs INTEGER NULL;
+                        ALTER TABLE Screenshots ADD COLUMN AiDurationMs INTEGER NULL;
+                        ALTER TABLE Screenshots ADD COLUMN OcrFinishedAt TEXT NULL;
+                        ALTER TABLE Screenshots ADD COLUMN AiFinishedAt TEXT NULL;
+                        PRAGMA user_version = 5;
+                        """;
+                    command.ExecuteNonQuery();
+                }
                 // Interrupted paid requests are not resent automatically on restart.
                 command.CommandText = """
                     UPDATE Screenshots SET AiStatus = 'Cancelled',
@@ -112,6 +123,69 @@ namespace SmartScreenshotManager.Data
         }
 
         // Reserve atomically before sending. Failed/unknown requests also consume the local limit.
+        public void SaveAttemptTiming(int id, bool ai, long durationMs)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = ai
+                    ? "UPDATE Screenshots SET AiDurationMs=$ms,AiFinishedAt=$at WHERE Id=$id"
+                    : "UPDATE Screenshots SET OcrDurationMs=$ms,OcrFinishedAt=$at WHERE Id=$id";
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$ms", Math.Max(0, durationMs));
+                command.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+                command.ExecuteNonQuery();
+            }
+        }
+
+        public ActivitySnapshot GetActivity(string folder, bool failuresOnly)
+        {
+            lock (_gate)
+            {
+                using var connection = Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT COUNT(*),
+                        COALESCE(SUM(OcrStatus='Processed'),0), COALESCE(SUM(OcrStatus='Failed'),0),
+                        COALESCE(SUM(AiStatus='Processed'),0), COALESCE(SUM(AiStatus='Failed'),0),
+                        COALESCE(SUM(AiStatus='Cancelled'),0)
+                    FROM Screenshots WHERE FolderPath=$folder;
+                    """;
+                command.Parameters.AddWithValue("$folder", folder);
+                string summary;
+                long total;
+                using (var reader = command.ExecuteReader())
+                {
+                    reader.Read();
+                    total = reader.GetInt64(0);
+                    summary = $"Saved results in this folder: OCR {reader.GetInt64(1)} processed / {reader.GetInt64(2)} failed · AI {reader.GetInt64(3)} processed / {reader.GetInt64(4)} failed / {reader.GetInt64(5)} cancelled";
+                }
+                command.CommandText = """
+                    SELECT Id,FileName,FilePath,OcrStatus,AiStatus,OcrError,AiError,
+                        OcrDurationMs,AiDurationMs,OcrFinishedAt,AiFinishedAt
+                    FROM Screenshots WHERE FolderPath=$folder
+                        AND ($failures=0 OR OcrStatus='Failed' OR AiStatus IN ('Failed','Cancelled'))
+                    ORDER BY CASE
+                        WHEN OcrStatus='Processing' OR AiStatus='Processing' THEN 0
+                        WHEN OcrStatus='Failed' OR AiStatus IN ('Failed','Cancelled') THEN 1
+                        WHEN OcrStatus='Pending' THEN 2 ELSE 3 END,
+                        AddedAt DESC, Id DESC LIMIT 200;
+                    """;
+                command.Parameters.AddWithValue("$failures", failuresOnly ? 1 : 0);
+                var items = new List<ActivityItem>();
+                using (var reader = command.ExecuteReader())
+                {
+                    string? Text(int i) => reader.IsDBNull(i) ? null : reader.GetString(i);
+                    long? Number(int i) => reader.IsDBNull(i) ? null : reader.GetInt64(i);
+                    while (reader.Read()) items.Add(new ActivityItem(reader.GetInt32(0), reader.GetString(1),
+                        reader.GetString(2), reader.GetString(3), reader.GetString(4), Text(5), Text(6),
+                        Number(7), Number(8), Text(9), Text(10)));
+                }
+                return new ActivitySnapshot(items, summary, total);
+            }
+        }
+
         public long ReserveAiRequest(int limit, string model)
         {
             lock (_gate)

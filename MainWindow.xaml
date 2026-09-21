@@ -90,6 +90,8 @@
                         Margin="0,0,0,8"
                         Click="CategoryButton_Click" />
 
+                    <Button x:Name="ActivityButton" Content="Processing / Activity"
+                        HorizontalAlignment="Stretch" Margin="0,16,0,8" Click="ActivityButton_Click" />
                 </StackPanel>
 
                 <Button
@@ -582,6 +584,69 @@
 
             </Grid>
 
+        </Grid>
+
+        <Grid x:Name="ActivityPage" Grid.Column="1" Padding="30" Visibility="Collapsed" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Processing / Activity" FontSize="32" FontWeight="SemiBold" />
+            <StackPanel Grid.Row="1" Spacing="6">
+                <TextBlock x:Name="ActivityFolderText" TextWrapping="Wrap" Opacity="0.6" />
+                <TextBlock x:Name="ActivityQueueText" TextWrapping="Wrap" />
+                <ProgressBar x:Name="ActivityProgress" IsIndeterminate="True" Visibility="Collapsed" />
+                <TextBlock x:Name="ActivitySummaryText" TextWrapping="Wrap" />
+                <TextBlock x:Name="ActivitySemanticText" TextWrapping="Wrap" Opacity="0.7" />
+                <TextBlock x:Name="ActivityUsageText" TextWrapping="Wrap" Opacity="0.7" />
+                <TextBlock Text="Shows the latest state of each screenshot. AI retries use your API balance and daily limit. Times are recorded from this update onward."
+                    TextWrapping="Wrap" Opacity="0.6" />
+            </StackPanel>
+            <StackPanel Grid.Row="2" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button Content="Refresh" Click="ActivityRefresh_Click" />
+                    <CheckBox x:Name="ActivityFailuresOnly" Content="Failures / cancelled only"
+                        Checked="ActivityFilter_Changed" Unchecked="ActivityFilter_Changed" />
+                </StackPanel>
+                <TextBlock x:Name="ActivityMessageText" TextWrapping="Wrap" />
+                <TextBlock x:Name="ActivityCountText" Opacity="0.6" />
+            </StackPanel>
+            <ListView Grid.Row="3" x:Name="ActivityList" SelectionMode="None">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:ActivityItem">
+                        <Border Padding="12" Margin="0,0,0,8" CornerRadius="8"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{x:Bind FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                    ToolTipService.ToolTip="{x:Bind FilePath}" />
+                                <TextBlock Text="{x:Bind OcrLabel}" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind AiLabel}" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind ErrorText}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Retry OCR" Tag="{x:Bind Id}" IsEnabled="{x:Bind CanRetryOcr}"
+                                        Click="ActivityRetryOcr_Click" />
+                                    <Button Content="Retry AI (API)" Tag="{x:Bind Id}" IsEnabled="{x:Bind CanRetryAi}"
+                                        Click="ActivityRetryAi_Click" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <Expander Grid.Row="4" Header="Recent processing log (UTC)" HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Stretch">
+                <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="ActivityLogText" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontFamily="Consolas" FontSize="12" />
+                </ScrollViewer>
+            </Expander>
         </Grid>
 
         <!-- Settings page -->

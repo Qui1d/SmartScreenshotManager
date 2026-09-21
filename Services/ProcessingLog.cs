@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 
 namespace SmartScreenshotManager.Services
 {
@@ -9,6 +10,15 @@ namespace SmartScreenshotManager.Services
         private readonly string _path;
         private readonly object _gate = new();
         public ProcessingLog(string path) => _path = path;
+
+        public string ReadRecent()
+        {
+            lock (_gate)
+            {
+                if (!File.Exists(_path)) return "No log entries yet.";
+                return string.Join(Environment.NewLine, File.ReadLines(_path).TakeLast(100));
+            }
+        }
 
         public void Write(string message)
         {
