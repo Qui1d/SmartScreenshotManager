@@ -16,6 +16,7 @@ namespace SmartScreenshotManager.Views
         private readonly SettingsService _settingsService;
 
         private bool _isRecordingHotkey;
+        private bool _settingsLoaded;
 
         private bool _ctrlPressed;
         private bool _altPressed;
@@ -37,6 +38,33 @@ namespace SmartScreenshotManager.Views
                 new SettingsService();
 
             LoadSettings();
+            _settingsLoaded = true;
+        }
+
+        private void AutoCopyToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (!_settingsLoaded) return;
+            try
+            {
+                _settingsService.AutoCopyScreenshot = AutoCopyToggle.IsOn;
+                CaptureSettingsStatusText.Text = "Saved.";
+            }
+            catch { CaptureSettingsStatusText.Text = "Could not save the clipboard setting."; }
+        }
+
+        private void SaveUsageLimit_Click(object sender, RoutedEventArgs e)
+        {
+            double value = AiDailyLimitBox.Value;
+            if (!double.IsFinite(value) || value < 0 || value > 10000 || value != Math.Truncate(value))
+            { UsageSettingsStatusText.Text = "Enter a whole number from 0 to 10000."; return; }
+            try
+            {
+                _settingsService.AiDailyLimit = (int)value;
+                AiSettingsChanged?.Invoke(_settingsService.GetAiConfiguration());
+                UsageSettingsStatusText.Text = "Daily limit saved.";
+                RefreshAiUsage();
+            }
+            catch { UsageSettingsStatusText.Text = "Could not apply the limit. Check AI settings and try again."; }
         }
 
         private void LoadSettings()
@@ -47,6 +75,7 @@ namespace SmartScreenshotManager.Views
                     ? "No folder selected"
                     : _settingsService.ScreenshotFolder;
 
+            AutoCopyToggle.IsOn = _settingsService.AutoCopyScreenshot;
             UpdateHotkeyText();
             AiEnabledToggle.IsOn = _settingsService.AiEnabled;
             AiAutomaticToggle.IsOn = _settingsService.AiAutomatic;
@@ -74,12 +103,6 @@ namespace SmartScreenshotManager.Views
         {
             try
             {
-                double limit = AiDailyLimitBox.Value;
-                if (double.IsNaN(limit) || double.IsInfinity(limit) || limit < 0 || limit > 10000 || limit != Math.Truncate(limit))
-                {
-                    AiSettingsStatusText.Text = "Enter a whole daily limit from 0 to 10000.";
-                    return;
-                }
                 string model = AiModelBox.Text.Trim();
                 if (string.IsNullOrWhiteSpace(model) || model.Length > 120)
                 {
@@ -96,7 +119,6 @@ namespace SmartScreenshotManager.Views
                     AiSettingsStatusText.Text = "Save an API key before enabling AI analysis.";
                     return;
                 }
-                _settingsService.AiDailyLimit = (int)limit;
                 _settingsService.AiModel = model;
                 _settingsService.AiEnabled = AiEnabledToggle.IsOn;
                 _settingsService.AiAutomatic = AiAutomaticToggle.IsOn;

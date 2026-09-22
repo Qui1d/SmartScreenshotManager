@@ -15,6 +15,15 @@ using WinRT.Interop;
 
 namespace SmartScreenshotManager.Views
 {
+    public sealed class CaptureGrid : Grid
+    {
+        public CaptureGrid()
+        {
+            ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create(
+                Microsoft.UI.Input.InputSystemCursorShape.Cross);
+        }
+    }
+
     public sealed partial class SnippingWindow : Window
     {
         private const int GwlStyle = -16;
@@ -43,8 +52,11 @@ namespace SmartScreenshotManager.Views
 
         private string? _previewFilePath;
 
+        public bool CopyRequested { get; private set; }
+        public bool ClipboardCopied { get; private set; }
         public event Action<string>? SnipCompleted;
         public event Action? SnipCancelled;
+        public event Action? SnipFailed;
 
         public SnippingWindow(
             string destinationFolder)
@@ -146,7 +158,8 @@ namespace SmartScreenshotManager.Views
             object sender,
             PointerRoutedEventArgs e)
         {
-            if (_finished)
+            if (_finished || _isSelecting ||
+                !e.GetCurrentPoint(RootGrid).Properties.IsLeftButtonPressed)
                 return;
 
             _selectionStart =
@@ -216,8 +229,14 @@ namespace SmartScreenshotManager.Views
                 return;
             }
 
-            await CompleteSnipAsync(
-                selection);
+            try { await CompleteSnipAsync(selection); }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine(exception);
+                _finished = true;
+                SnipFailed?.Invoke();
+                Close();
+            }
         }
 
         private void UpdateSelection(
@@ -242,8 +261,38 @@ namespace SmartScreenshotManager.Views
             SelectionRectangle.Height =
                 selection.Height;
 
-            UpdateDimming(
-                selection);
+            UpdateDimming(selection);
+            UpdateSelectionSize(selection);
+        }
+
+        private void UpdateSelectionSize(Rect selection)
+        {
+            if (_screenCapture == null || RootGrid.ActualWidth <= 0 || RootGrid.ActualHeight <= 0)
+                return;
+
+            var pixels = GetPixelSelection(selection);
+            SelectionSizeText.Text = $"{pixels.Width} × {pixels.Height} px";
+            SelectionSizeBadge.Visibility = Visibility.Visible;
+            SelectionSizeBadge.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var size = SelectionSizeBadge.DesiredSize;
+            double top = selection.Y - size.Height - 8;
+            if (top < 0) top = selection.Bottom + 8;
+            Canvas.SetLeft(SelectionSizeBadge,
+                Math.Clamp(selection.X, 0, Math.Max(0, RootGrid.ActualWidth - size.Width)));
+            Canvas.SetTop(SelectionSizeBadge,
+                Math.Clamp(top, 0, Math.Max(0, RootGrid.ActualHeight - size.Height)));
+        }
+
+        private (int X, int Y, int Width, int Height) GetPixelSelection(Rect selection)
+        {
+            var capture = _screenCapture!;
+            double scaleX = capture.Width / RootGrid.ActualWidth;
+            double scaleY = capture.Height / RootGrid.ActualHeight;
+            int x = Math.Clamp((int)Math.Round(selection.X * scaleX), 0, capture.Width - 1);
+            int y = Math.Clamp((int)Math.Round(selection.Y * scaleY), 0, capture.Height - 1);
+            int width = Math.Clamp((int)Math.Round(selection.Width * scaleX), 1, capture.Width - x);
+            int height = Math.Clamp((int)Math.Round(selection.Height * scaleY), 1, capture.Height - y);
+            return (x, y, width, height);
         }
 
         private void UpdateDimming(
@@ -322,10 +371,15 @@ namespace SmartScreenshotManager.Views
                 selection.Height;
         }
 
-        private static Rect GetSelectionRectangle(
+        private Rect GetSelectionRectangle(
             Point start,
             Point end)
         {
+            start = new Point(Math.Clamp(start.X, 0, RootGrid.ActualWidth),
+                Math.Clamp(start.Y, 0, RootGrid.ActualHeight));
+            end = new Point(Math.Clamp(end.X, 0, RootGrid.ActualWidth),
+                Math.Clamp(end.Y, 0, RootGrid.ActualHeight));
+
             double x =
                 Math.Min(
                     start.X,
@@ -355,6 +409,7 @@ namespace SmartScreenshotManager.Views
 
         private void ResetSelection()
         {
+            SelectionSizeBadge.Visibility = Visibility.Collapsed;
             SelectionRectangle.Visibility =
                 Visibility.Collapsed;
 
@@ -393,41 +448,9 @@ namespace SmartScreenshotManager.Views
             _finished =
                 true;
 
-            double scaleX =
-                _screenCapture.Width /
-                RootGrid.ActualWidth;
-
-            double scaleY =
-                _screenCapture.Height /
-                RootGrid.ActualHeight;
-
-            int pixelX =
-                (int)Math.Round(
-                    selection.X *
-                    scaleX);
-
-            int pixelY =
-                (int)Math.Round(
-                    selection.Y *
-                    scaleY);
-
-            int pixelWidth =
-                (int)Math.Round(
-                    selection.Width *
-                    scaleX);
-
-            int pixelHeight =
-                (int)Math.Round(
-                    selection.Height *
-                    scaleY);
-
-            var cropped =
-                _captureService.Crop(
-                    _screenCapture,
-                    pixelX,
-                    pixelY,
-                    pixelWidth,
-                    pixelHeight);
+            var pixels = GetPixelSelection(selection);
+            var cropped = _captureService.Crop(_screenCapture,
+                pixels.X, pixels.Y, pixels.Width, pixels.Height);
 
             string fileName =
                 $"Screenshot_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.png";
@@ -442,8 +465,8 @@ namespace SmartScreenshotManager.Views
              * Automatically copy the newly created screenshot
              * to the Windows clipboard.
              */
-            CopyScreenshotToClipboard(
-                file);
+            CopyRequested = new SettingsService().AutoCopyScreenshot;
+            ClipboardCopied = CopyRequested && CopyScreenshotToClipboard(file);
 
             SnipCompleted?.Invoke(
                 file.Path);
@@ -451,7 +474,7 @@ namespace SmartScreenshotManager.Views
             Close();
         }
 
-        private static void CopyScreenshotToClipboard(
+        private static bool CopyScreenshotToClipboard(
             StorageFile file)
         {
             try
@@ -472,11 +495,13 @@ namespace SmartScreenshotManager.Views
                     dataPackage);
 
                 Clipboard.Flush();
+                return true;
             }
             catch (Exception exception)
             {
                 System.Diagnostics.Debug.WriteLine(
                     exception);
+                return false;
             }
         }
 

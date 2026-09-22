@@ -295,6 +295,7 @@ namespace SmartScreenshotManager
                     new SnippingWindow(
                         _currentFolderPath);
 
+                _snippingWindow.SnipFailed += SnippingWindow_SnipFailed;
                 _snippingWindow.SnipCompleted +=
                     SnippingWindow_SnipCompleted;
 
@@ -320,13 +321,25 @@ namespace SmartScreenshotManager
         private void SnippingWindow_SnipCompleted(
             string filePath)
         {
+            bool requested = _snippingWindow?.CopyRequested == true;
+            bool copied = _snippingWindow?.ClipboardCopied == true;
             CleanupSnippingWindow();
+            ShowActionNotification(copied ? "Screenshot saved and copied to clipboard."
+                : requested ? "Screenshot saved. Clipboard is unavailable; use Copy to retry."
+                : "Screenshot saved.", requested && !copied);
 
             RestoreMainWindowIfNeeded();
 
             _ =
                 EnsureScreenshotAppearsAsync(
                     filePath);
+        }
+
+        private void SnippingWindow_SnipFailed()
+        {
+            CleanupSnippingWindow();
+            RestoreMainWindowIfNeeded();
+            ShowActionNotification("Could not save the screenshot. Check the folder and available disk space.", true);
         }
 
         private void SnippingWindow_SnipCancelled()
@@ -341,6 +354,7 @@ namespace SmartScreenshotManager
             if (_snippingWindow == null)
                 return;
 
+            _snippingWindow.SnipFailed -= SnippingWindow_SnipFailed;
             _snippingWindow.SnipCompleted -=
                 SnippingWindow_SnipCompleted;
 
@@ -991,6 +1005,7 @@ namespace SmartScreenshotManager
                 data.SetText(item.OcrText);
                 Clipboard.SetContent(data);
                 Clipboard.Flush();
+                ShowActionNotification("Copied to clipboard.");
             }
             catch (Exception exception) { ShowStorageError(exception); }
         }
@@ -1040,11 +1055,11 @@ namespace SmartScreenshotManager
                     dataPackage);
 
                 Clipboard.Flush();
+                ShowActionNotification("Copied to clipboard.");
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    exception);
+                ShowActionNotification("Could not copy the screenshot. Try again.", true);
             }
         }
 
@@ -1728,6 +1743,7 @@ namespace SmartScreenshotManager
         {
             _isClosed = true;
             _activityTimer?.Stop();
+            _notificationTimer?.Stop();
             _indexSummaryTimer?.Stop();
             _semanticCancellation?.Cancel();
             _ocrQueue.StateChanged -= OcrQueue_StateChanged;
@@ -2244,6 +2260,27 @@ namespace SmartScreenshotManager
             else if (message.Contains("timed out", StringComparison.OrdinalIgnoreCase)) compact = "Request timed out · see ⓘ";
             else compact = "Search / index: see ⓘ for details";
             CompactSearchStatus.Text = compact;
+        }
+
+        private DispatcherTimer? _notificationTimer;
+        private void ShowActionNotification(string message, bool warning = false)
+        {
+            if (_isClosed) return;
+            _notificationTimer?.Stop();
+            ActionNotification.Message = message;
+            ActionNotification.Severity = warning ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
+            ActionNotification.IsOpen = true;
+            if (warning) return;
+            if (_notificationTimer == null)
+            {
+                _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                _notificationTimer.Tick += (_, _) =>
+                {
+                    _notificationTimer.Stop();
+                    ActionNotification.IsOpen = false;
+                };
+            }
+            _notificationTimer.Start();
         }
 
     }

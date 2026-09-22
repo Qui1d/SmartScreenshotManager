@@ -683,6 +683,9 @@
 
         </Grid>
 
+        <InfoBar x:Name="ActionNotification" Grid.Column="1" VerticalAlignment="Bottom"
+            HorizontalAlignment="Stretch" Margin="24" IsOpen="False" IsClosable="True" />
+
         <!-- Drag & drop overlay -->
         <Grid
             x:Name="DropOverlay"

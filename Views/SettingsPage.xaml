@@ -1,179 +1,62 @@
-<UserControl
-    x:Class="SmartScreenshotManager.Views.SettingsPage"
+<UserControl x:Class="SmartScreenshotManager.Views.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    x:Name="RootControl"
-    IsTabStop="True"
-    KeyDown="RootControl_KeyDown"
-    KeyUp="RootControl_KeyUp">
-
-    <ScrollViewer>
-
-        <StackPanel
-            Spacing="24"
-            MaxWidth="850"
-            HorizontalAlignment="Left">
-
-            <!-- Header -->
-            <StackPanel Spacing="6">
-
-                <TextBlock
-                    Text="Settings"
-                    FontSize="30"
-                    FontWeight="SemiBold" />
-
-                <TextBlock
-                    Text="Configure Smart Screenshot Manager"
-                    Opacity="0.65" />
-
-            </StackPanel>
-
-            <!-- Screenshot folder -->
-            <Border
-                Padding="20"
-                CornerRadius="12"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1">
-
-                <StackPanel Spacing="14">
-
-                    <TextBlock
-                        Text="Screenshot folder"
-                        FontSize="20"
-                        FontWeight="SemiBold" />
-
-                    <TextBlock
-                        Text="Screenshots displayed in the application and new snips will be stored in this folder."
-                        TextWrapping="Wrap"
-                        Opacity="0.65" />
-
-                    <Border
-                        Padding="12"
-                        CornerRadius="8"
-                        Background="{ThemeResource ControlFillColorSecondaryBrush}">
-
-                        <TextBlock
-                            x:Name="ScreenshotFolderText"
-                            Text="No folder selected"
-                            TextWrapping="Wrap"
-                            TextTrimming="CharacterEllipsis" />
-
-                    </Border>
-
-                    <Button
-                        Content="Change folder"
-                        HorizontalAlignment="Left"
-                        Click="ChangeFolderButton_Click" />
-
-                </StackPanel>
-
-            </Border>
-
-            <!-- Hotkey -->
-            <Border
-                Padding="20"
-                CornerRadius="12"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1">
-
-                <StackPanel Spacing="18">
-
-                    <TextBlock
-                        Text="Screenshot hotkey"
-                        FontSize="20"
-                        FontWeight="SemiBold" />
-
-                    <TextBlock
-                        Text="This shortcut will be used to start a new snip."
-                        TextWrapping="Wrap"
-                        Opacity="0.65" />
-
-                    <StackPanel Spacing="8">
-
-                        <TextBlock
-                            Text="Current shortcut"
-                            FontWeight="SemiBold" />
-
-                        <Border
-                            Padding="16"
-                            CornerRadius="8"
-                            Background="{ThemeResource ControlFillColorSecondaryBrush}">
-
-                            <StackPanel Spacing="4">
-
-                                <TextBlock
-                                    x:Name="CurrentHotkeyText"
-                                    Text="Ctrl + Shift + S"
-                                    FontSize="18"
-                                    FontWeight="SemiBold" />
-
-                                <TextBlock
-                                    x:Name="HotkeyStatusText"
-                                    Text="Press Change hotkey to record a new shortcut."
-                                    FontSize="12"
-                                    Opacity="0.6" />
-
-                            </StackPanel>
-
-                        </Border>
-
-                    </StackPanel>
-
-                    <StackPanel
-                        Orientation="Horizontal"
-                        Spacing="12">
-
-                        <Button
-                            x:Name="ChangeHotkeyButton"
-                            Content="Change hotkey"
-                            Click="ChangeHotkeyButton_Click" />
-
-                        <Button
-                            x:Name="ResetHotkeyButton"
-                            Content="Reset to default"
-                            Click="ResetHotkeyButton_Click" />
-
-                    </StackPanel>
-
-                </StackPanel>
-
-            </Border>
-
-            <Border Padding="20" CornerRadius="12"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+    x:Name="RootControl" IsTabStop="True" KeyDown="RootControl_KeyDown" KeyUp="RootControl_KeyUp">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled"
+        HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top">
+        <StackPanel Spacing="16" HorizontalAlignment="Stretch">
+            <TextBlock Text="Settings" FontSize="30" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <Expander Header="General" IsExpanded="True" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="AI analysis" FontSize="20" FontWeight="SemiBold" />
-                    <TextBlock Text="AI sends a resized screenshot and its recognized text to OpenAI to create a description, category and tags. API usage is billed separately."
-                        TextWrapping="Wrap" Opacity="0.7" />
+                    <TextBlock Text="Screenshot folder" FontWeight="SemiBold" />
+                    <TextBlock x:Name="ScreenshotFolderText" Text="No folder selected" TextWrapping="Wrap" Opacity="0.7" />
+                    <Button Content="Change folder" Click="ChangeFolderButton_Click" />
+                </StackPanel>
+            </Expander>
+            <Expander Header="Capture" IsExpanded="True" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <StackPanel Spacing="12">
+                    <ToggleSwitch x:Name="AutoCopyToggle" Header="Copy new screenshots to clipboard" Toggled="AutoCopyToggle_Toggled" />
+                    <TextBlock Text="Screenshot hotkey" FontWeight="SemiBold" />
+                    <TextBlock x:Name="CurrentHotkeyText" FontSize="18" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="ChangeHotkeyButton" Content="Change hotkey" Click="ChangeHotkeyButton_Click" />
+                        <Button x:Name="ResetHotkeyButton" Content="Reset" Click="ResetHotkeyButton_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="HotkeyStatusText" TextWrapping="Wrap" Opacity="0.65" />
+                    <TextBlock x:Name="CaptureSettingsStatusText" TextWrapping="Wrap" Opacity="0.65" />
+                </StackPanel>
+            </Expander>
+            <Expander Header="AI analysis" IsExpanded="True" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Uses your OpenAI API balance. Changes apply after Save." TextWrapping="Wrap" Opacity="0.7" />
                     <ToggleSwitch x:Name="AiEnabledToggle" Header="Enable AI analysis" />
-                    <ToggleSwitch x:Name="AiAutomaticToggle" Header="Automatically analyze new screenshots" />
-                    <TextBlock Text="Automatic analysis applies only to screenshots added while this option is enabled. Existing screenshots can be analyzed from Details. Changes take effect after Save."
-                        TextWrapping="Wrap" Opacity="0.7" />
-                    <NumberBox x:Name="AiDailyLimitBox" Header="Daily request limit" Minimum="0" Maximum="10000"
-                        Value="100" SmallChange="1" SpinButtonPlacementMode="Compact" />
-                    <TextBlock Text="0 blocks all AI requests. Resets at 00:00 UTC. AI analysis, semantic indexing/search, retries and failed requests count too. Save to apply."
-                        TextWrapping="Wrap" Opacity="0.7" />
-                    <TextBlock x:Name="AiUsageText" TextWrapping="Wrap" />
-                    <Button Content="Refresh usage" Click="RefreshAiUsageButton_Click" />
-                    <TextBlock Text="Token totals include only usage reported by the API since this update. Interrupted requests may have a charge without usage data. This counter covers this app only."
-                        TextWrapping="Wrap" Opacity="0.7" />
-                    <PasswordBox x:Name="AiApiKeyBox" Header="OpenAI API key"
-                        PlaceholderText="Enter a key; leave blank to keep the saved key" />
-                    <TextBlock x:Name="AiKeyStatusText" Text="No API key saved." TextWrapping="Wrap" Opacity="0.7" />
-                    <TextBox x:Name="AiModelBox" Header="Model" Text="gpt-4.1-mini-2025-04-14" />
-                    <StackPanel Orientation="Horizontal" Spacing="10">
+                    <ToggleSwitch x:Name="AiAutomaticToggle" Header="Analyze new screenshots automatically"
+                        ToolTipService.ToolTip="Only new screenshots are analyzed automatically. Existing ones can be analyzed from Details." />
+                    <PasswordBox x:Name="AiApiKeyBox" Header="API key" PlaceholderText="Leave blank to keep the saved key" />
+                    <TextBlock x:Name="AiKeyStatusText" TextWrapping="Wrap" Opacity="0.65" />
+                    <TextBox x:Name="AiModelBox" Header="Model" ToolTipService.ToolTip="Must support images and structured output." />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Content="Save AI settings" Click="SaveAiSettingsButton_Click" />
-                        <Button Content="Remove API key" Click="RemoveAiKeyButton_Click" />
+                        <Button Content="Remove key" Click="RemoveAiKeyButton_Click" />
                     </StackPanel>
                     <TextBlock x:Name="AiSettingsStatusText" TextWrapping="Wrap" />
+                    <TextBlock Text="Analysis sends the screenshot and OCR text to OpenAI. The key is stored in Windows Credential Locker."
+                        TextWrapping="Wrap" Opacity="0.65" />
+                    <Border Height="1" Background="{ThemeResource SystemControlForegroundBaseLowBrush}" Margin="0,8,0,4" />
+                    <TextBlock Text="Usage and limits" FontWeight="SemiBold" />
+                    <NumberBox x:Name="AiDailyLimitBox" Header="Daily API request limit" Minimum="0" Maximum="10000"
+                        Value="100" SmallChange="1" SpinButtonPlacementMode="Compact"
+                        ToolTipService.ToolTip="Includes AI analysis, indexing, search and failed requests. 0 blocks new requests. Resets at 00:00 UTC." />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Save limit" Click="SaveUsageLimit_Click" />
+                        <Button Content="Refresh usage" Click="RefreshAiUsageButton_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="UsageSettingsStatusText" TextWrapping="Wrap" />
+                    <TextBlock x:Name="AiUsageText" TextWrapping="Wrap" />
+                    <TextBlock Text="Resets at 00:00 UTC. Token totals include usage reported by the API; interrupted requests may still be charged."
+                        TextWrapping="Wrap" Opacity="0.65" />
                 </StackPanel>
-            </Border>
-
+            </Expander>
         </StackPanel>
-
     </ScrollViewer>
-
 </UserControl>

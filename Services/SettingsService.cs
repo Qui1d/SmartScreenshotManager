@@ -41,6 +41,12 @@ namespace SmartScreenshotManager.Services
             }
         }
 
+        public bool AutoCopyScreenshot
+        {
+            get => GetBool("AutoCopyScreenshot", true);
+            set => _settings.Values["AutoCopyScreenshot"] = value;
+        }
+
         public bool AiEnabled
         {
             get => GetBool("AiEnabled", false);
