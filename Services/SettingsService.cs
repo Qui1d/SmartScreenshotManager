@@ -41,6 +41,12 @@ namespace SmartScreenshotManager.Services
             }
         }
 
+        public bool CloseToTray
+        {
+            get => GetBool("CloseToTray", true);
+            set => _settings.Values["CloseToTray"] = value;
+        }
+
         public bool AutoCopyScreenshot
         {
             get => GetBool("AutoCopyScreenshot", true);

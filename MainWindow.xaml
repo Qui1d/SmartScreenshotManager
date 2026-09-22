@@ -505,15 +505,16 @@
 
                         <!-- Details content -->
                         <ScrollViewer
-                            Grid.Row="1"
+                            x:Name="DetailsScrollViewer" Grid.Row="1"
+                            HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch"
                             Margin="0,12,0,0">
 
                             <StackPanel Spacing="10">
 
                                 <Image
                                     x:Name="DetailsImage"
-                                    Width="340"
-                                    Height="220"
+                                    MaxWidth="340"
+                                    MaxHeight="220"
                                     HorizontalAlignment="Center"
                                     Stretch="Uniform" />
 
@@ -524,8 +525,25 @@
                                     TextWrapping="Wrap" />
 
                                 <TextBlock
-                                    x:Name="DetailsDate"
+                                    x:Name="DetailsDate" TextWrapping="Wrap"
                                     Opacity="0.65" />
+
+                                <Border Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="Resolution" Opacity="0.6" FontSize="12" />
+                                            <TextBlock x:Name="DetailsResolution" Text="Loading…" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="4">
+                                            <TextBlock Text="File size" Opacity="0.6" FontSize="12" />
+                                            <TextBlock x:Name="DetailsFileSize" Text="Loading…" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
 
                                 <Border
                                     Height="1"
@@ -557,6 +575,7 @@
 
                                 <TextBlock Text="Tags" FontWeight="SemiBold" />
                                 <TextBlock x:Name="DetailsTags" Text="No tags yet" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,8,0,8" />
                                 <TextBlock Text="AI analysis" FontWeight="SemiBold" />
                                 <TextBlock x:Name="DetailsAiStatus" Text="NotProcessed" Opacity="0.7" />
                                 <TextBlock x:Name="DetailsAiError" TextWrapping="Wrap" Visibility="Collapsed" />
@@ -564,6 +583,7 @@
                                     HorizontalAlignment="Left" Click="AnalyzeAiButton_Click" />
                                 <TextBlock x:Name="DetailsAiHint" TextWrapping="Wrap" Opacity="0.6" />
 
+                                <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,8,0,8" />
                                 <TextBlock
                                     Text="OCR Text"
                                     FontWeight="SemiBold"
@@ -587,6 +607,8 @@
                                     IsTextSelectionEnabled="True"
                                     Opacity="0.7" />
 
+                                <Button x:Name="ToggleOcrTextButton" Content="Show more" Visibility="Collapsed"
+                                    Click="ToggleOcrTextButton_Click" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button x:Name="CopyOcrButton"
                                         Content="Copy text" IsEnabled="False"

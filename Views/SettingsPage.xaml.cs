@@ -39,6 +39,63 @@ namespace SmartScreenshotManager.Views
 
             LoadSettings();
             _settingsLoaded = true;
+            Loaded += async (_, _) => await RefreshStartupAsync();
+        }
+
+        private bool _updatingStartup;
+
+        private void CloseToTrayToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (!_settingsLoaded) return;
+            _settingsService.CloseToTray = CloseToTrayToggle.IsOn;
+        }
+
+        private async System.Threading.Tasks.Task RefreshStartupAsync()
+        {
+            if (_updatingStartup) return;
+            _updatingStartup = true;
+            StartupToggle.IsEnabled = false;
+            try
+            {
+                var task = await Windows.ApplicationModel.StartupTask.GetAsync("SmartScreenshotManagerStartup");
+                ShowStartupState(task.State);
+            }
+            catch { StartupStatusText.Text = "Startup is unavailable. Rebuild and deploy the updated app package."; }
+            finally { _updatingStartup = false; StartupToggle.IsEnabled = true; }
+        }
+
+        private void ShowStartupState(Windows.ApplicationModel.StartupTaskState state)
+        {
+            StartupToggle.IsOn = state == Windows.ApplicationModel.StartupTaskState.Enabled
+                || state == Windows.ApplicationModel.StartupTaskState.EnabledByPolicy;
+            StartupStatusText.Text = state switch
+            {
+                Windows.ApplicationModel.StartupTaskState.DisabledByUser => "Disabled in Windows. Enable it in Windows Settings > Apps > Startup.",
+                Windows.ApplicationModel.StartupTaskState.DisabledByPolicy => "Startup is disabled by your administrator.",
+                Windows.ApplicationModel.StartupTaskState.EnabledByPolicy => "Startup is enabled by your administrator.",
+                Windows.ApplicationModel.StartupTaskState.Enabled => "Enabled. Starts in the tray when Close to system tray is on.",
+                _ => "Off. The app will not start automatically."
+            };
+        }
+
+        private async void StartupToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (!_settingsLoaded || _updatingStartup) return;
+            bool requested = StartupToggle.IsOn;
+            _updatingStartup = true;
+            StartupToggle.IsEnabled = false;
+            try
+            {
+                var task = await Windows.ApplicationModel.StartupTask.GetAsync("SmartScreenshotManagerStartup");
+                if (requested) ShowStartupState(await task.RequestEnableAsync());
+                else { task.Disable(); ShowStartupState(task.State); }
+            }
+            catch
+            {
+                StartupToggle.IsOn = !requested;
+                StartupStatusText.Text = "Could not change startup. Check Windows Settings > Apps > Startup.";
+            }
+            finally { _updatingStartup = false; StartupToggle.IsEnabled = true; }
         }
 
         private void AutoCopyToggle_Toggled(object sender, RoutedEventArgs e)
@@ -75,6 +132,7 @@ namespace SmartScreenshotManager.Views
                     ? "No folder selected"
                     : _settingsService.ScreenshotFolder;
 
+            CloseToTrayToggle.IsOn = _settingsService.CloseToTray;
             AutoCopyToggle.IsOn = _settingsService.AutoCopyScreenshot;
             UpdateHotkeyText();
             AiEnabledToggle.IsOn = _settingsService.AiEnabled;

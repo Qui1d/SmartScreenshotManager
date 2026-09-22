@@ -25,6 +25,12 @@ namespace SmartScreenshotManager
 {
     public sealed partial class MainWindow : Window
     {
+        private TrayService? _tray;
+        private bool _exitRequested;
+        private bool _ocrTextExpanded;
+        private string _detailsOcrFullText = string.Empty;
+        private int _detailsMetadataVersion;
+
         private const int SwHide = 0;
         private const int SwShow = 5;
 
@@ -104,13 +110,41 @@ namespace SmartScreenshotManager
             UpdateGallerySection();
             LoadSavedFolder();
 
-            Closed +=
-                MainWindow_Closed;
+            _tray = new TrayService(WindowNative.GetWindowHandle(this));
+            _tray.OpenRequested += () => _dispatcherQueue.TryEnqueue(RestoreFromTray);
+            _tray.ExitRequested += () => _dispatcherQueue.TryEnqueue(() =>
+            {
+                _exitRequested = true;
+                Close();
+            });
+            _tray.EnsureVisible();
+            AppWindow.Closing += (_, args) =>
+            {
+                if (!_exitRequested && _settingsService.CloseToTray && TryHideToTray())
+                    args.Cancel = true;
+            };
+            Closed += MainWindow_Closed;
         }
 
         // =========================
         // Title bar
         // =========================
+
+        public bool TryHideToTray()
+        {
+            if (_tray?.EnsureVisible() != true) return false;
+            AppWindow.Hide();
+            return true;
+        }
+
+        public void RestoreFromTray()
+        {
+            if (_isClosed) return;
+            AppWindow.Show();
+            if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+                presenter.Restore();
+            Activate();
+        }
 
         private void ConfigureTitleBar()
         {
@@ -367,7 +401,7 @@ namespace SmartScreenshotManager
 
         private void RestoreMainWindowIfNeeded()
         {
-            if (!_mainWindowHiddenForSnip)
+            if (_isClosed || !_mainWindowHiddenForSnip)
                 return;
 
             _mainWindowHiddenForSnip =
@@ -803,8 +837,10 @@ namespace SmartScreenshotManager
         private void ShowScreenshotDetails(
             ScreenshotItem screenshot)
         {
-            _detailsFilePath =
-                screenshot.FilePath;
+            _detailsFilePath = screenshot.FilePath;
+            _ocrTextExpanded = false;
+            DetailsScrollViewer.ChangeView(null, 0, null, true);
+            _ = LoadDetailsMetadataAsync(screenshot.FilePath);
 
             DetailsColumn.Width =
                 new GridLength(
@@ -947,13 +983,64 @@ namespace SmartScreenshotManager
             DetailsOcrError.Text = screenshot.OcrError ?? string.Empty;
             DetailsOcrError.Visibility = string.IsNullOrWhiteSpace(screenshot.OcrError)
                 ? Visibility.Collapsed : Visibility.Visible;
-            DetailsOcrText.Text = !string.IsNullOrWhiteSpace(screenshot.OcrText)
+            _detailsOcrFullText = !string.IsNullOrWhiteSpace(screenshot.OcrText)
                 ? screenshot.OcrText
                 : screenshot.OcrStatus == "Processed" ? "No text found in this image."
                 : screenshot.OcrStatus == "Failed" ? "Text recognition failed. You can retry below."
                 : "Waiting for text recognition...";
+            RenderDetailsOcrText();
             RetryOcrButton.IsEnabled = screenshot.OcrStatus is not ("Pending" or "Processing");
             CopyOcrButton.IsEnabled = !string.IsNullOrWhiteSpace(screenshot.OcrText);
+        }
+
+        private void ToggleOcrTextButton_Click(object sender, RoutedEventArgs e)
+        {
+            _ocrTextExpanded = !_ocrTextExpanded;
+            RenderDetailsOcrText();
+        }
+
+        private void RenderDetailsOcrText()
+        {
+            string text = _detailsOcrFullText.Replace("\r\n", "\n").Replace('\r', '\n');
+            int end = Math.Min(450, text.Length);
+            int lines = 0;
+            for (int i = 0; i < end; i++)
+                if (text[i] == '\n' && ++lines == 6) { end = i; break; }
+            // Do not split a UTF-16 surrogate pair in the preview.
+            if (end > 0 && end < text.Length && char.IsHighSurrogate(text[end - 1])) end--;
+            bool truncated = end < text.Length;
+            DetailsOcrText.Text = !_ocrTextExpanded && truncated
+                ? text.Substring(0, end).TrimEnd() + "…" : text;
+            ToggleOcrTextButton.Visibility = truncated ? Visibility.Visible : Visibility.Collapsed;
+            ToggleOcrTextButton.Content = _ocrTextExpanded ? "Show less" : "Show more";
+        }
+
+        private async Task LoadDetailsMetadataAsync(string path)
+        {
+            int version = ++_detailsMetadataVersion;
+            DetailsFileSize.Text = "Loading…";
+            DetailsResolution.Text = "Loading…";
+            try
+            {
+                var file = await StorageFile.GetFileFromPathAsync(path);
+                var properties = await file.GetBasicPropertiesAsync();
+                if (version != _detailsMetadataVersion || _detailsFilePath != path) return;
+                double size = properties.Size;
+                string[] units = { "B", "KB", "MB", "GB", "TB" };
+                int unit = 0;
+                while (size >= 1024 && unit < units.Length - 1) { size /= 1024; unit++; }
+                DetailsFileSize.Text = $"{size:0.##} {units[unit]}";
+                using var stream = await file.OpenAsync(FileAccessMode.Read);
+                var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+                if (version != _detailsMetadataVersion || _detailsFilePath != path) return;
+                DetailsResolution.Text = $"{decoder.OrientedPixelWidth} × {decoder.OrientedPixelHeight} px";
+            }
+            catch (Exception)
+            {
+                if (version != _detailsMetadataVersion || _detailsFilePath != path) return;
+                if (DetailsFileSize.Text == "Loading…") DetailsFileSize.Text = "Unavailable";
+                DetailsResolution.Text = "Unavailable";
+            }
         }
 
         private void OcrQueue_StateChanged(OcrJobState state)
@@ -1711,6 +1798,9 @@ namespace SmartScreenshotManager
 
         private void CloseDetailsPanel()
         {
+            ++_detailsMetadataVersion;
+            _detailsOcrFullText = string.Empty;
+            _ocrTextExpanded = false;
             _detailsFilePath =
                 null;
 
@@ -1742,6 +1832,8 @@ namespace SmartScreenshotManager
             WindowEventArgs args)
         {
             _isClosed = true;
+            _tray?.Dispose();
+            _snippingWindow?.Close();
             _activityTimer?.Stop();
             _notificationTimer?.Stop();
             _indexSummaryTimer?.Stop();

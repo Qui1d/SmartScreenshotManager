@@ -11,6 +11,10 @@
                     <TextBlock Text="Screenshot folder" FontWeight="SemiBold" />
                     <TextBlock x:Name="ScreenshotFolderText" Text="No folder selected" TextWrapping="Wrap" Opacity="0.7" />
                     <Button Content="Change folder" Click="ChangeFolderButton_Click" />
+                    <ToggleSwitch x:Name="CloseToTrayToggle" Header="Close to system tray" Toggled="CloseToTrayToggle_Toggled" />
+                    <TextBlock Text="Keep hotkeys and processing active. Use Exit in the tray menu to quit." TextWrapping="Wrap" Opacity="0.65" />
+                    <ToggleSwitch x:Name="StartupToggle" Header="Start with Windows" Toggled="StartupToggle_Toggled" />
+                    <TextBlock x:Name="StartupStatusText" TextWrapping="Wrap" Opacity="0.65" />
                 </StackPanel>
             </Expander>
             <Expander Header="Capture" IsExpanded="True" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
