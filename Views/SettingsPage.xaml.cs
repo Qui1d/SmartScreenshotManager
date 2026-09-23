@@ -38,6 +38,12 @@ namespace SmartScreenshotManager.Views
                 new SettingsService();
 
             LoadSettings();
+            try
+            {
+                var version = Windows.ApplicationModel.Package.Current.Id.Version;
+                AppVersionText.Text = $"Version {version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
+            }
+            catch { AppVersionText.Text = "Version unavailable"; }
             _settingsLoaded = true;
             Loaded += async (_, _) => await RefreshStartupAsync();
         }

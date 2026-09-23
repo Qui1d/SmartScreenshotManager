@@ -570,14 +570,28 @@ namespace SmartScreenshotManager
         {
             InvalidateSemanticResults();
             GalleryTitle.Text = _showFavoritesOnly ? "Favorites" : _selectedCategory ?? "All Screenshots";
-            var accentStyle = (Style)Application.Current.Resources["AccentButtonStyle"];
-            AllScreenshotsButton.Style = !_showFavoritesOnly && _selectedCategory == null ? accentStyle : null;
-            FavoritesButton.Style = _showFavoritesOnly ? accentStyle : null;
-            GamingButton.Style = _selectedCategory == "Gaming" ? accentStyle : null;
-            ProgrammingButton.Style = _selectedCategory == "Programming" ? accentStyle : null;
-            DocumentsButton.Style = _selectedCategory == "Documents" ? accentStyle : null;
-            OtherButton.Style = _selectedCategory == "Other" ? accentStyle : null;
+            UpdateNavigationSelection();
             ApplyCurrentSort();
+        }
+
+        private void UpdateNavigationSelection()
+        {
+            Button selected;
+            if (SettingsPageContainer.Visibility == Visibility.Visible) selected = SettingsButton;
+            else if (ActivityPage.Visibility == Visibility.Visible) selected = ActivityButton;
+            else if (_showFavoritesOnly) selected = FavoritesButton;
+            else selected = _selectedCategory switch
+            {
+                "Gaming" => GamingButton,
+                "Programming" => ProgrammingButton,
+                "Documents" => DocumentsButton,
+                "Other" => OtherButton,
+                _ => AllScreenshotsButton
+            };
+            var accent = (Style)Application.Current.Resources["AccentButtonStyle"];
+            foreach (var button in new[] { AllScreenshotsButton, FavoritesButton, GamingButton,
+                ProgrammingButton, DocumentsButton, OtherButton, ActivityButton, SettingsButton })
+                button.Style = button == selected ? accent : null;
         }
 
         private async void CategoryMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1613,6 +1627,7 @@ namespace SmartScreenshotManager
 
             SettingsPageContainer.Visibility =
                 Visibility.Visible;
+            UpdateNavigationSelection();
         }
 
         private void ShowGalleryPage()
@@ -1623,6 +1638,7 @@ namespace SmartScreenshotManager
 
             GalleryPage.Visibility =
                 Visibility.Visible;
+            UpdateNavigationSelection();
         }
 
         // =========================
@@ -2138,9 +2154,7 @@ namespace SmartScreenshotManager
             GalleryPage.Visibility = Visibility.Collapsed;
             SettingsPageContainer.Visibility = Visibility.Collapsed;
             ActivityPage.Visibility = Visibility.Visible;
-            ActivityButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
-            foreach (var button in new[] { AllScreenshotsButton, FavoritesButton, GamingButton,
-                ProgrammingButton, DocumentsButton, OtherButton }) button.Style = null;
+            UpdateNavigationSelection();
             ActivityMessageText.Text = string.Empty;
             _activityTimer?.Start();
             RefreshActivity();

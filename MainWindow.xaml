@@ -34,9 +34,9 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <StackPanel
-                    Grid.Row="0"
-                    Padding="20">
+                <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled"
+                    HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto">
+                <StackPanel Padding="20">
 
                     <TextBlock
                         Text="Smart Screenshot"
@@ -46,60 +46,103 @@
 
                     <Button
                         x:Name="AllScreenshotsButton"
-                        Content="All Screenshots"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
-                        Click="AllScreenshotsButton_Click" />
+                        Click="AllScreenshotsButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="All Screenshots" ToolTipService.ToolTip="All Screenshots">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE91B;" FontSize="16" Width="20" />
+                            <TextBlock Text="All Screenshots" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <Button
                         x:Name="FavoritesButton"
-                        Content="Favorites"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
-                        Click="FavoritesButton_Click" />
+                        Click="FavoritesButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Favorites" ToolTipService.ToolTip="Favorites">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE734;" FontSize="16" Width="20" />
+                            <TextBlock Text="Favorites" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <Button
                         x:Name="GamingButton"
-                        Content="Gaming"
                         Tag="Gaming"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
-                        Click="CategoryButton_Click" />
+                        Click="CategoryButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Gaming" ToolTipService.ToolTip="Gaming">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7FC;" FontSize="16" Width="20" />
+                            <TextBlock Text="Gaming" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <Button
                         x:Name="ProgrammingButton"
-                        Content="Programming"
                         Tag="Programming"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
-                        Click="CategoryButton_Click" />
+                        Click="CategoryButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Programming" ToolTipService.ToolTip="Programming">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE943;" FontSize="16" Width="20" />
+                            <TextBlock Text="Programming" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <Button
                         x:Name="DocumentsButton"
-                        Content="Documents"
                         Tag="Documents"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
-                        Click="CategoryButton_Click" />
+                        Click="CategoryButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Documents" ToolTipService.ToolTip="Documents">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8A5;" FontSize="16" Width="20" />
+                            <TextBlock Text="Documents" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <Button
                         x:Name="OtherButton"
-                        Content="Other"
                         Tag="Other"
                         HorizontalAlignment="Stretch"
                         Margin="0,0,0,8"
-                        Click="CategoryButton_Click" />
+                        Click="CategoryButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Other" ToolTipService.ToolTip="Other">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8B7;" FontSize="16" Width="20" />
+                            <TextBlock Text="Other" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
-                    <Button x:Name="ActivityButton" Content="Processing / Activity"
-                        HorizontalAlignment="Stretch" Margin="0,16,0,8" Click="ActivityButton_Click" />
+                    <Button x:Name="ActivityButton"
+                        HorizontalAlignment="Stretch" Margin="0,16,0,8" Click="ActivityButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Activity" ToolTipService.ToolTip="Activity">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE9D9;" FontSize="16" Width="20" />
+                            <TextBlock Text="Activity" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
+                </ScrollViewer>
 
                 <Button
+                    x:Name="SettingsButton"
                     Grid.Row="1"
-                    Content="Settings"
                     HorizontalAlignment="Stretch"
                     Margin="20"
-                    Click="SettingsButton_Click" />
+                    Click="SettingsButton_Click"  HorizontalContentAlignment="Left" MinHeight="40" Padding="12,8"
+                        AutomationProperties.Name="Settings" ToolTipService.ToolTip="Settings">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE713;" FontSize="16" Width="20" />
+                            <TextBlock Text="Settings" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
             </Grid>
 
