@@ -27,6 +27,8 @@ namespace SmartScreenshotManager
     {
         private TrayService? _tray;
         private bool _exitRequested;
+        private DispatcherTimer? _watcherRecoveryTimer;
+        private FileSystemWatcher? _watcherToRecover;
         private bool _ocrTextExpanded;
         private string _detailsOcrFullText = string.Empty;
         private int _detailsMetadataVersion;
@@ -70,6 +72,8 @@ namespace SmartScreenshotManager
             InitializeComponent();
 
             ConfigureTitleBar();
+            try { AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico")); }
+            catch (Exception exception) { System.Diagnostics.Debug.WriteLine(exception); }
 
             _dispatcherQueue =
                 DispatcherQueue.GetForCurrentThread();
@@ -339,7 +343,7 @@ namespace SmartScreenshotManager
                 await _snippingWindow
                     .PrepareAsync();
 
-                _snippingWindow.Activate();
+                _snippingWindow.ShowForCapture();
             }
             catch (Exception exception)
             {
@@ -1477,12 +1481,15 @@ namespace SmartScreenshotManager
             _watcher.Deleted +=
                 Watcher_Deleted;
 
+            _watcher.Error += Watcher_Error;
             _watcher.EnableRaisingEvents =
                 true;
         }
 
         private void StopWatchingFolder()
         {
+            _watcherRecoveryTimer?.Stop();
+            _watcherToRecover = null;
             if (_watcher == null)
                 return;
 
@@ -1498,10 +1505,43 @@ namespace SmartScreenshotManager
             _watcher.Deleted -=
                 Watcher_Deleted;
 
+            _watcher.Error -= Watcher_Error;
             _watcher.Dispose();
 
             _watcher =
                 null;
+        }
+
+        private void Watcher_Error(object sender, ErrorEventArgs e)
+        {
+            // FileSystemWatcher may lose events during a large batch or a disconnected drive.
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                if (_isClosed || !ReferenceEquals(sender, _watcher)) return;
+                _activityLog?.Write("Folder watcher interrupted; scheduling library rescan.");
+                _watcherToRecover = _watcher;
+                if (_watcherRecoveryTimer == null)
+                {
+                    _watcherRecoveryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
+                    _watcherRecoveryTimer.Tick += (_, _) =>
+                    {
+                        _watcherRecoveryTimer.Stop();
+                        if (_isClosed || _watcherToRecover == null || !ReferenceEquals(_watcherToRecover, _watcher)) return;
+                        string? folder = _currentFolderPath;
+                        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+                        {
+                            StopWatchingFolder();
+                            StorageInfoBar.Message = "Screenshot folder is unavailable. Reconnect the drive and select the folder again in Settings.";
+                            StorageInfoBar.IsOpen = true;
+                            return;
+                        }
+                        // Rescan existing metadata. This does not enqueue paid AI analysis.
+                        SetScreenshotFolder(folder);
+                    };
+                }
+                _watcherRecoveryTimer.Stop();
+                _watcherRecoveryTimer.Start();
+            });
         }
 
         private void Watcher_Created(

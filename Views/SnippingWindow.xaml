@@ -73,7 +73,7 @@
             Padding="18,10"
             CornerRadius="8"
             Background="#DD202020"
-            IsHitTestVisible="False">
+            >
 
             <StackPanel
                 Orientation="Horizontal"
@@ -81,12 +81,13 @@
 
                 <TextBlock
                     Text="Select an area to capture"
+                    VerticalAlignment="Center"
                     Foreground="White"
                     FontWeight="SemiBold" />
 
-                <TextBlock
-                    Text="Esc to cancel"
-                    Foreground="#BFFFFFFF" />
+                <Button x:Name="CancelCaptureButton" Content="Esc to cancel"
+                    VerticalAlignment="Center"
+                    Click="CancelCaptureButton_Click" Loaded="CancelCaptureButton_Loaded" />
 
             </StackPanel>
 

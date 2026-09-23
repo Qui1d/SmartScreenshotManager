@@ -47,6 +47,7 @@ namespace SmartScreenshotManager.Views
 
         private Point _selectionStart;
 
+        private HotkeyService? _escapeHotkey;
         private bool _isSelecting;
         private bool _finished;
 
@@ -71,6 +72,25 @@ namespace SmartScreenshotManager.Views
 
             Closed +=
                 SnippingWindow_Closed;
+        }
+
+        public void ShowForCapture()
+        {
+            IntPtr hwnd = WindowNative.GetWindowHandle(this);
+            _escapeHotkey = new HotkeyService(hwnd);
+            _escapeHotkey.HotkeyPressed += EscapeHotkey_Pressed;
+            if (!_escapeHotkey.RegisterHotkey(Windows.System.VirtualKey.Escape, false, false, false, false))
+                System.Diagnostics.Debug.WriteLine("Escape hotkey unavailable; using focused window accelerator.");
+            Activate();
+            SetForegroundWindow(hwnd);
+            CancelCaptureButton.Focus(FocusState.Programmatic);
+        }
+
+        private void EscapeHotkey_Pressed() => DispatcherQueue.TryEnqueue(CancelSnip);
+        private void CancelCaptureButton_Click(object sender, RoutedEventArgs e) => CancelSnip();
+        private void CancelCaptureButton_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (!_finished) CancelCaptureButton.Focus(FocusState.Programmatic);
         }
 
         public async Task PrepareAsync()
@@ -540,6 +560,12 @@ namespace SmartScreenshotManager.Views
             object sender,
             WindowEventArgs args)
         {
+            if (_escapeHotkey != null)
+            {
+                _escapeHotkey.HotkeyPressed -= EscapeHotkey_Pressed;
+                _escapeHotkey.Dispose();
+                _escapeHotkey = null;
+            }
             if (!_finished)
             {
                 _finished =
@@ -568,6 +594,9 @@ namespace SmartScreenshotManager.Views
         // =========================
         // Win32
         // =========================
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hwnd);
 
         [DllImport(
             "user32.dll",

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace SmartScreenshotManager.Services
@@ -9,6 +10,7 @@ namespace SmartScreenshotManager.Services
         private readonly IntPtr _hwnd;
         private readonly SubclassProc _proc;
         private readonly uint _taskbarCreated;
+        private IntPtr _ownedIcon;
         private bool _installed;
         private bool _disposed;
         private NotifyIconData _data;
@@ -20,11 +22,13 @@ namespace SmartScreenshotManager.Services
             _hwnd = hwnd;
             _proc = WindowProc;
             _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
+            _ownedIcon = LoadImage(IntPtr.Zero, Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"),
+                1, GetSystemMetrics(49), GetSystemMetrics(50), 0x10);
             _data = new NotifyIconData
             {
                 Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = hwnd, Id = 42,
                 Flags = 1 | 2 | 4, Callback = CallbackMessage,
-                Icon = LoadIcon(IntPtr.Zero, new IntPtr(32512)),
+                Icon = _ownedIcon != IntPtr.Zero ? _ownedIcon : LoadIcon(IntPtr.Zero, new IntPtr(32512)),
                 Tip = "Smart Screenshot Manager", Info = "", InfoTitle = ""
             };
             _installed = SetWindowSubclass(hwnd, _proc, new UIntPtr(1042), UIntPtr.Zero);
@@ -77,6 +81,7 @@ namespace SmartScreenshotManager.Services
             Shell_NotifyIcon(2, ref _data);
             if (_installed) RemoveWindowSubclass(_hwnd, _proc, new UIntPtr(1042));
             _installed = false;
+            if (_ownedIcon != IntPtr.Zero) { DestroyIcon(_ownedIcon); _ownedIcon = IntPtr.Zero; }
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -93,6 +98,9 @@ namespace SmartScreenshotManager.Services
         }
         [StructLayout(LayoutKind.Sequential)] private struct Point { public int X; public int Y; }
         private delegate IntPtr SubclassProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, UIntPtr id, UIntPtr data);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr LoadImage(IntPtr instance, string name, uint type, int width, int height, uint flags);
+        [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr icon);
+        [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] private static extern bool Shell_NotifyIcon(uint message, ref NotifyIconData data);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr LoadIcon(IntPtr instance, IntPtr name);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);

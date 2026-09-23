@@ -2,6 +2,7 @@
     x:Class="SmartScreenshotManager.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:imaging="using:Microsoft.UI.Xaml.Media.Imaging"
     xmlns:models="using:SmartScreenshotManager.Models"
     xmlns:views="using:SmartScreenshotManager.Views"
     Title="Smart Screenshot Manager">
@@ -447,10 +448,14 @@
 
                                     <Image
                                         Grid.Row="0"
-                                        Source="{x:Bind FilePath}"
                                         HorizontalAlignment="Stretch"
                                         Height="140"
-                                        Stretch="UniformToFill" />
+                                        Stretch="UniformToFill">
+                                        <Image.Source>
+                                            <imaging:BitmapImage UriSource="{x:Bind FilePath}"
+                                                DecodePixelWidth="480" DecodePixelType="Physical" />
+                                        </Image.Source>
+                                    </Image>
 
                                     <Button
                                         Grid.Row="0"

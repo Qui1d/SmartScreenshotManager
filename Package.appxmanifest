@@ -11,7 +11,7 @@
   <Identity
     Name="4bca7a6d-fd4b-4e02-9020-b87950922561"
     Publisher="CN=dimas"
-    Version="1.0.0.0" />
+    Version="1.0.1.0" />
 
   <mp:PhoneIdentity PhoneProductId="4bca7a6d-fd4b-4e02-9020-b87950922561" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -39,7 +39,7 @@
         Description="SmartScreenshotManager"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
-        Square44x44Logo="Assets\Square44x44Logo.png">
+        Square44x44Logo="Assets\AppLogo.png">
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
